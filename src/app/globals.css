@@ -1,14 +1,49 @@
 @import "tailwindcss";
 
-:root {
-  color-scheme: light;
+/*
+ * Design tokens. Use the generated utilities (bg-canvas, text-ink, border-line,
+ * max-w-page, …) rather than raw hex values in components.
+ */
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --color-canvas: #f6f8f7;
+  --color-surface: #ffffff;
+  --color-ink: #15302b;
+  --color-ink-muted: #4c635d;
+  --color-line: #dbe4e0;
+  --color-line-strong: #bfcdc7;
+  --color-accent: #16695a;
+  --color-accent-strong: #0e4d42;
+  --color-accent-soft: #e2efea;
+  --color-danger: #9f3a2b;
+  --color-danger-soft: #fbefec;
+
+  --container-page: 72rem;
+  --container-copy: 40rem;
 }
 
-body {
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+    color: var(--color-ink);
+  }
 }
 
-::selection {
-  background: #c4e3d8;
-  color: #193b36;
+@utility link {
+  @apply text-accent underline decoration-1 underline-offset-4 hover:text-accent-strong;
 }
