@@ -6,7 +6,7 @@ This repository is the **UI/application layer**. RDP remains the source of measu
 
 ## Develop
 
-Requires Node.js 22.13 or newer; CI and deployment use the Active LTS in `.nvmrc` (24).
+Requires Node.js 22.13 up to 24; CI and deployment use the Active LTS in `.nvmrc` (24). The bounded `engines` range is what pins Vercel to 24.x: Vercel lets `engines` override the project setting, and an open-ended range would resolve to the newest major.
 
 ```bash
 npm ci
@@ -47,6 +47,6 @@ Follow [AGENTS.md](AGENTS.md), [product guidance](docs/PRODUCT.md) and [architec
 
 ## Deployment
 
-Import this repository into Vercel as a **Next.js** project. No framework-specific configuration is needed for the shell; set the project's Node.js version to 24.x to match `.nvmrc`. This shell is safe to deploy without RDP credentials.
+Import this repository into Vercel as a **Next.js** project. No framework-specific configuration is needed for the shell; set the project's Node.js version to 24.x to match `.nvmrc` (the `engines` range enforces it). This shell is safe to deploy without RDP credentials.
 
 Live data **requires separate, approved setup** in RDP: a dedicated per-stage `river-data-platform-<stage>-ui-vercel-<environment>` role and a read handler that admits it. Do not reuse isHPPOpen's role. See [deployment configuration](docs/ARCHITECTURE.md#deployment-configuration).
