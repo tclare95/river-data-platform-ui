@@ -1,31 +1,28 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import Link from "next/link";
+import { SiteFooter } from "@/components/site-footer";
+import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "River Data Platform",
+  title: {
+    default: "River Data Platform",
+    template: "%s · River Data Platform",
+  },
   description: "Explore river observations and history.",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#ffffff",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-[#f8faf8] text-[#193b36] antialiased">
-        <a
-          href="#main"
-          className="sr-only rounded bg-white px-3 py-2 text-[#135e52] focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50"
-        >
-          Skip to content
-        </a>
-        <header className="border-b border-[#dbe5e0]">
-          <div className="mx-auto flex h-20 max-w-6xl items-center px-6 sm:px-10">
-            <Link href="/" className="text-lg font-semibold tracking-tight">
-              River Data Platform
-            </Link>
-          </div>
-        </header>
+    <html lang="en-GB">
+      <body className="flex min-h-dvh flex-col">
+        <SiteHeader />
         {children}
+        <SiteFooter />
       </body>
     </html>
   );

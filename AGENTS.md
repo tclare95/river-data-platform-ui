@@ -15,7 +15,7 @@ Consult current code/contracts in RDP before making integration assumptions.
 
 ## Boundaries
 
-- The UI **may have its own Next.js application API** for UI-specific operations, access checks or browser-facing bounded data responses. This is *not* a generic upstream proxy or a new canonical backend.
+- The UI **may have its own Next.js application API** for UI-specific operations, access checks or browser-facing bounded data responses. This is _not_ a generic upstream proxy or a new canonical backend.
 - Access the AWS_IAM/SigV4 RDP read service **server-side only**, using dedicated Vercel-project OIDC → STS → read-only role. No browser AWS credentials, private API hostnames, archive access or `NEXT_PUBLIC_` server secrets.
 - Reuse published measurement IDs, units, timestamps, quality, datum, provenance, freshness and coverage semantics. Do not invent locations, live values, continuous data or new domain rules.
 - The RDP measurement catalogue does not yet guarantee river/geolocation metadata; see [RDP #129](https://github.com/tclare95/river-data-platform/issues/129). Make discovery usable as a list without a map.
@@ -27,6 +27,13 @@ Consult current code/contracts in RDP before making integration assumptions.
 Simple, clean and river-first. Keep copy short and useful. **No eyebrows, shoulders, pre-headings, redundant explanatory/justification text, ornamental badges or dashboard clutter.** Use real content hierarchy, measured spacing, clear states and mobile-friendly layouts.
 
 Design for different kinds of visitors. Start with a searchable list; let detail and analysis progressively reveal more. Distinguish unavailable, not collected, stale and unknown states. Never present an observation as a safety recommendation.
+
+## UI foundation
+
+- Design tokens live in `src/app/globals.css` (`@theme`): `canvas`, `surface`, `ink`, `ink-muted`, `line`, `accent`, `danger`, `max-w-page`, `max-w-copy`. Use token utilities, not raw hex values. Add a token only when a real component needs it.
+- Shared presentation is in `src/components/`: `PageMain`/`Container` (single `main#main` landmark and gutters), `PageHeader` (one `h1` plus optional one-line description), `SiteHeader`/`NavLink` (main navigation with `aria-current`), `EmptyState`, `LoadingState`, `ErrorState` and `Button`.
+- Use `EmptyState`, `LoadingState` and `ErrorState` for unavailable, not-collected, stale and unknown data rather than ad hoc markup. Never render raw exception or upstream messages.
+- Tests use Vitest, jsdom and Testing Library (`tests/`, `@/` alias). Assert behaviour and accessible roles, not Tailwind classes or snapshots.
 
 ## Working practice
 
