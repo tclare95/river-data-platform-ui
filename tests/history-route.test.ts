@@ -78,8 +78,19 @@ describe("GET /api/measurements/{id}/history", () => {
       "ea-colwick-level",
       "?from=2026-11-01T00:00+01:00&to=2026-11-02T00:00Z",
     ],
-    ["an oversized limit", "ea-colwick-level", "?limit=50000"],
-    ["a malformed cursor", "ea-colwick-level", "?cursor=%2F%2F"],
+    ["any limit (the page size is fixed)", "ea-colwick-level", "?limit=100"],
+    [
+      "a window off the hour grid",
+      "ea-colwick-level",
+      "?from=2026-11-01T00:00:00.001Z&to=2026-11-02T00:00Z",
+    ],
+    ["minute precision", "ea-colwick-level", "?from=2026-11-01T00:30Z&to=2026-11-02T00:00Z"],
+    [
+      "a malformed cursor",
+      "ea-colwick-level",
+      "?from=2026-11-01T00:00Z&to=2026-11-02T00:00Z&cursor=%2F%2F",
+    ],
+    ["a cursor without its explicit window", "ea-colwick-level", "?cursor=abc"],
     ["a malformed ID", "EA_COLWICK", ""],
   ])("rejects %s", async (_name, id, query) => {
     const response = await call(id, query);

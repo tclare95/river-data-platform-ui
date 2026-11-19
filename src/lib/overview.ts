@@ -36,7 +36,8 @@ export async function loadOverview(): Promise<Overview> {
     const ids = measures.slice(start, start + RDP_LIMITS.latestBatch).map((m) => m.measurementId);
     try {
       const batch = await rdp.getLatest(ids);
-      retrievedAt = batch.retrievedAt;
+      // Report the oldest batch time so the page never overstates how recently it checked.
+      if (retrievedAt === null || batch.retrievedAt < retrievedAt) retrievedAt = batch.retrievedAt;
       for (const item of batch.items) latest.set(item.measurementId, toPublicLatest(item));
     } catch {
       // That batch stays unavailable; other batches and the catalogue still render.

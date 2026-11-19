@@ -1,3 +1,4 @@
+import "server-only";
 import { RdpError } from "./errors";
 
 export type RdpStage = "staging" | "production";

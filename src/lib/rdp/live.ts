@@ -1,3 +1,4 @@
+import "server-only";
 import { AssumeRoleWithWebIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import { Hash } from "@smithy/hash-node";
 import { SignatureV4 } from "@smithy/signature-v4";
@@ -24,6 +25,10 @@ export type LiveDependencies = {
 
 /** Credentials are refreshed when fewer than this many milliseconds remain. */
 const REFRESH_MARGIN_MS = 60_000;
+/** Budget for one shared OIDC → STS exchange, independent of any single request's deadline. */
+const EXCHANGE_TIMEOUT_MS = 6_000;
+const OBSERVATION_PATH =
+  /^\/v1\/measurements(?:\/latest|\/[a-z0-9][a-z0-9-]{0,79}\/(?:health|observations))?$/;
 
 function defaultAssumeRole(config: LiveConfig) {
   // Explicit regional endpoint, no SDK retries and short socket timeouts. No default credential chain is used.
@@ -83,11 +88,14 @@ export function createLiveTransport(
 
   async function credentials(signal: AbortSignal): Promise<Credentials> {
     if (cached && cached.expiration.getTime() - deps.now() > REFRESH_MARGIN_MS) return cached;
-    // One in-flight exchange shared by concurrent requests.
+    // One in-flight exchange shared by concurrent requests. It runs on its own budget, so one caller's deadline
+    // never fails the exchange for the others; each caller only stops waiting when its own deadline passes.
     pending ??= (async () => {
+      // Yield first so `pending` is assigned before any synchronous throw reaches `finally`.
+      await Promise.resolve();
       try {
         const token = await deps.getToken();
-        const value = await deps.assumeRole(token, signal);
+        const value = await deps.assumeRole(token, AbortSignal.timeout(EXCHANGE_TIMEOUT_MS));
         if (
           !Number.isFinite(value.expiration.getTime()) ||
           value.expiration.getTime() - deps.now() <= REFRESH_MARGIN_MS
@@ -100,18 +108,35 @@ export function createLiveTransport(
         pending = undefined;
       }
     })();
+    const exchange = pending;
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(new RdpError("TIMEOUT"));
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    });
     try {
-      return await pending;
-    } catch {
-      if (signal.aborted) throw new RdpError("TIMEOUT");
+      return await Promise.race([exchange, aborted]);
+    } catch (error) {
+      if (signal.aborted || (error instanceof RdpError && error.code === "TIMEOUT")) {
+        throw new RdpError("TIMEOUT");
+      }
       throw new RdpError("AUTHENTICATION_FAILED");
+    } finally {
+      signal.removeEventListener("abort", onAbort!);
+      // The shared exchange may still reject later; that outcome belongs to whoever is still waiting.
+      exchange.catch(() => undefined);
+      aborted.catch(() => undefined);
     }
   }
 
-  return ({ path, query, timeoutMs }) => {
-    if (!path.startsWith("/v1/measurements")) throw new RdpError("INVALID_QUERY");
+  return async ({ path, query, timeoutMs }) => {
+    // Exactly the four observation routes; nothing that URL resolution could normalise elsewhere.
+    if (!OBSERVATION_PATH.test(path)) throw new RdpError("INVALID_QUERY");
     const url = new URL(base.toString());
     url.pathname = `${base.pathname}${path}`;
+    if (url.pathname !== `${base.pathname}${path}` || url.host !== base.host)
+      throw new RdpError("INVALID_QUERY");
     url.search = new URLSearchParams(query).toString();
     return withDeadlineAndRetry(
       timeoutMs,

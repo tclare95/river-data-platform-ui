@@ -63,7 +63,8 @@ export function toPublicLatest(latest: Latest) {
       labelConvention: latest.labelConvention,
       periodStart: latest.periodStart,
       periodEnd: latest.periodEnd,
-      totalMm: latest.totalMm,
+      // An ineligible interval is not an observed depth (RAINFALL.md eligibility): no number leaves the server.
+      totalMm: latest.eligible === false ? null : latest.totalMm,
       eligible: latest.eligible,
       quality: latest.quality,
     };
@@ -98,7 +99,7 @@ export function toPublicHistory(page: HistoryPage) {
         labelConvention: row.labelConvention,
         periodStart: row.periodStart,
         periodEnd: row.periodEnd,
-        totalMm: row.totalMm,
+        totalMm: row.eligible ? row.totalMm : null,
         quality: row.quality,
         eligible: row.eligible,
         ineligibleReason: row.ineligibleReason,

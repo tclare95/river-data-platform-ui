@@ -27,23 +27,27 @@ function LatestSummary({ item }: { item: OverviewItem }) {
     // A period total, never an instantaneous reading: always say what period it covers.
     const period = formatPeriod(measurement.periodSeconds ?? 0);
     const ending = latest.labelConvention !== "unverified" && latest.periodEnd;
+    const when = ending ? (
+      <>
+        in the {period} to <Time value={latest.periodEnd!} />
+      </>
+    ) : (
+      <>
+        {period} total labelled <Time value={latest.label!} />
+      </>
+    );
+    // An ineligible interval (missing/suspect quality) is not an observed depth: show no number for it.
+    if (latest.eligible === false || latest.totalMm === null) {
+      return (
+        <p>
+          <span className="text-ink-muted">Depth not reported (quality check failed)</span> {when}
+          <FreshnessNote freshness={latest.freshness} />
+        </p>
+      );
+    }
     return (
       <p>
-        <span className="font-medium">{formatNumber(latest.totalMm ?? 0, measurement.unit)}</span>
-        {ending ? (
-          <>
-            {" "}
-            in the {period} to <Time value={latest.periodEnd!} />
-          </>
-        ) : (
-          <>
-            {" "}
-            {period} total labelled <Time value={latest.label!} />
-          </>
-        )}
-        {latest.eligible === false ? (
-          <span className="text-ink-muted"> · Fails quality checks</span>
-        ) : null}
+        <span className="font-medium">{formatNumber(latest.totalMm, measurement.unit)}</span> {when}
         <FreshnessNote freshness={latest.freshness} />
       </p>
     );

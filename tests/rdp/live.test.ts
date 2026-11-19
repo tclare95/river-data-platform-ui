@@ -26,7 +26,8 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
 }
 
 function setup(responses: Array<Response | Error>) {
-  const fetch = vi.fn(async (..._args: Parameters<typeof globalThis.fetch>) => {
+  const fetch = vi.fn(async (...args: Parameters<typeof globalThis.fetch>) => {
+    void args;
     const next = responses.shift();
     if (!next) throw new Error("unexpected fetch");
     if (next instanceof Error) throw next;
@@ -92,15 +93,37 @@ describe("live signed transport", () => {
   });
 
   it("gives up after the single retry", async () => {
-    const { transport, fetch } = setup([json(429, {}), json(429, {})]);
-    await expect(transport(request)).rejects.toMatchObject({ code: "THROTTLED", status: 429 });
+    const { transport, fetch } = setup([json(503, {}), json(504, {})]);
+    await expect(transport(request)).rejects.toMatchObject({ code: "UPSTREAM_ERROR", status: 504 });
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("never retries a shared-throttle 429", async () => {
+    const { transport, fetch } = setup([json(429, {}, { "retry-after": "1" })]);
+    await expect(transport(request)).rejects.toMatchObject({ code: "THROTTLED", status: 429 });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("does not let one caller's deadline fail a shared credential exchange for others", async () => {
+    let finish!: (value: Credentials) => void;
+    const { transport, assumeRole } = setup([json(200, { ok: "long" })]);
+    assumeRole.mockImplementationOnce(
+      () => new Promise<Credentials>((resolve) => (finish = resolve)),
+    );
+    const short = transport({ ...request, timeoutMs: 10 });
+    const long = transport({ ...request, timeoutMs: 5_000 });
+    await expect(short).rejects.toMatchObject({ code: "TIMEOUT" });
+    finish(CREDENTIALS);
+    await expect(long).resolves.toEqual({ ok: "long" });
+    expect(assumeRole).toHaveBeenCalledOnce();
   });
 
   it.each([
     [403, {}, "AUTHORIZATION_FAILED"],
     [400, { error: { code: "VALIDATION_ERROR", message: "bad" } }, "INVALID_QUERY"],
     [404, { error: { code: "MEASUREMENT_NOT_FOUND", message: "x" } }, "MEASUREMENT_NOT_FOUND"],
+    // RDP's NOT_FOUND is an unknown route (misconfigured URL/stage), never a missing measurement.
+    [404, { error: { code: "NOT_FOUND", message: "x" } }, "CONFIGURATION_ERROR"],
     [409, { error: { code: "CURSOR_EXPIRED", message: "x" } }, "CURSOR_EXPIRED"],
     [503, { error: { code: "ARCHIVE_INTEGRITY", message: "x" } }, "ARCHIVE_INTEGRITY"],
   ])("does not retry %i and exposes only a fixed code", async (status, body, code) => {
@@ -152,10 +175,14 @@ describe("live signed transport", () => {
     });
   });
 
-  it("only signs observation routes", () => {
-    const { transport } = setup([]);
-    expect(() => transport({ path: "/v1/cso/outfalls", query: {}, timeoutMs: 1000 })).toThrow(
-      expect.objectContaining({ code: "INVALID_QUERY" }),
-    );
-  });
+  it.each(["/v1/cso/outfalls", "/v1/river/locate", "/v1/measurements/x/backfills"])(
+    "only signs the four observation routes, not %s",
+    async (path) => {
+      const { transport, fetch } = setup([]);
+      await expect(transport({ path, query: {}, timeoutMs: 1000 })).rejects.toMatchObject({
+        code: "INVALID_QUERY",
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 });

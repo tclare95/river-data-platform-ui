@@ -48,20 +48,21 @@ export const FIXTURE_MEASURES: ReadonlyArray<FixtureMeasure> = [
       unit: "mASD",
       name: "Kegworth",
     },
-    providerMeasureId: "fixture-kegworth-level",
+    providerMeasureId: "4074-level-stage-i-15_min-mASD",
     lagMinutes: null,
     sample: () => 0,
   },
   {
     wire: {
       ...EA,
+      datum: "unknown",
       measurementId: "ea-shardlow-flow",
       stationId: "ea-shardlow",
       parameter: "flow",
       unit: "m3/s",
       name: "Shardlow",
     },
-    providerMeasureId: "fixture-shardlow-flow",
+    providerMeasureId: "4007-flow--i-15_min-m3_s",
     lagMinutes: 190,
     sample: (i) => round(85 + 20 * Math.sin(i / 55), 2),
   },
@@ -140,7 +141,7 @@ function latest(measure: FixtureMeasure, now: number) {
     observedAt: at === null ? null : iso(at),
     value,
     unit: measure.wire.unit,
-    quality: at === null ? null : "Good",
+    quality: at === null ? null : JSON.stringify("Good"),
     freshness: freshnessAt(at, now),
     errorCode: null,
   };
@@ -241,7 +242,7 @@ function history(measure: FixtureMeasure, query: Readonly<Record<string, string>
       value: measure.sample(t / QUARTER_HOUR),
       unit: measure.wire.unit,
       datum: measure.wire.datum,
-      quality: "Good",
+      quality: JSON.stringify("Good"),
       ...provenance(t),
     }));
     return { data, meta };

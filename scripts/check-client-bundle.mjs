@@ -1,13 +1,15 @@
-// Fails if server-only RDP/AWS material reaches anything the browser downloads (.next/static).
-// Run after `next build`.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+// Fails if server-only RDP/AWS material reaches anything the browser downloads: client assets (.next/static) and
+// prerendered HTML/RSC payloads (.next/server/app). Run after `next build`.
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("../.next/static", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const next = fileURLToPath(new URL("../.next", import.meta.url));
 const forbidden = [
   "execute-api",
   "AssumeRoleWithWebIdentity",
-  "sts.eu-west-1",
+  "SignatureV4",
+  "amazonaws.com",
   "arn:aws:",
   "x-amz-security-token",
   "RDP_ROLE_ARN",
@@ -18,27 +20,30 @@ const forbidden = [
   "@smithy/signature-v4",
 ];
 
-function* files(directory) {
+function* files(directory, keep = () => true) {
+  if (!existsSync(directory)) return;
   for (const name of readdirSync(directory)) {
     const path = join(directory, name);
-    if (statSync(path).isDirectory()) yield* files(path);
-    else yield path;
+    if (statSync(path).isDirectory()) yield* files(path, keep);
+    else if (keep(path)) yield path;
   }
 }
 
-let checked = 0;
+const targets = [
+  ...files(join(next, "static")),
+  ...files(join(next, "server", "app"), (path) => /\.(html|rsc|body)$/.test(path)),
+];
 const leaks = [];
-for (const file of files(root)) {
+for (const file of targets) {
   const text = readFileSync(file, "utf8");
-  checked++;
   for (const term of forbidden) if (text.includes(term)) leaks.push(`${file}: ${term}`);
 }
-if (checked === 0) {
+if (targets.length === 0) {
   console.error("No client assets found; run `next build` first.");
   process.exit(1);
 }
 if (leaks.length > 0) {
-  console.error(`Server-only material found in client assets:\n${leaks.join("\n")}`);
+  console.error(`Server-only material found in browser-delivered output:\n${leaks.join("\n")}`);
   process.exit(1);
 }
-console.log(`Checked ${checked} client assets: no server-only RDP/AWS material.`);
+console.log(`Checked ${targets.length} browser-delivered files: no server-only RDP/AWS material.`);

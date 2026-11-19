@@ -14,7 +14,14 @@ function setup() {
     return fixture(request);
   });
   const log = vi.fn();
-  const client = createRdpClient({ mode: "fixture", transport, now: () => now, log });
+  const client = createRdpClient({
+    mode: "fixture",
+    transport,
+    now: () => now,
+    log,
+    // The frozen test clock never refills a token bucket; rate budgeting is covered separately below.
+    ratePerSecond: Number.POSITIVE_INFINITY,
+  });
   return { client, transport, failing, log, advance: (ms: number) => (now += ms) };
 }
 
@@ -122,14 +129,65 @@ describe("RDP client", () => {
 });
 
 describe("upstream limiter", () => {
-  it("caps concurrency and sheds load beyond its queue", async () => {
-    const limit = createLimiter(1, 1);
+  const unlimited = { ratePerSecond: Number.POSITIVE_INFINITY, burst: 1 };
+
+  it("caps concurrency, hands slots to waiters and sheds load beyond its queue", async () => {
+    const limit = createLimiter({ maxConcurrent: 1, maxQueued: 1, maxWaitMs: 5_000, ...unlimited });
     let release!: () => void;
+    let running = 0;
+    let peak = 0;
+    const tracked = async <T>(value: T) => {
+      peak = Math.max(peak, ++running);
+      await Promise.resolve();
+      running--;
+      return value;
+    };
     const first = limit(() => new Promise<void>((resolve) => (release = resolve)));
-    const second = limit(async () => "queued");
+    const second = limit(() => tracked("queued"));
     await expect(limit(async () => "shed")).rejects.toMatchObject({ code: "THROTTLED" });
     release();
     await first;
+    // A caller arriving at hand-off time must not run alongside the woken waiter.
+    const third = limit(() => tracked("after"));
     await expect(second).resolves.toBe("queued");
+    await expect(third).resolves.toBe("after");
+    expect(peak).toBe(1);
+  });
+
+  it("fails a queued call after its bounded wait", async () => {
+    const limit = createLimiter({ maxConcurrent: 1, maxQueued: 4, maxWaitMs: 20, ...unlimited });
+    const hold = limit(() => new Promise<void>((resolve) => setTimeout(resolve, 200)));
+    await expect(limit(async () => "late")).rejects.toMatchObject({ code: "THROTTLED" });
+    await hold;
+  });
+
+  it("spends a per-instance rate budget and sheds when the wait would exceed its bound", async () => {
+    let now = 0;
+    const sleep = vi.fn(async (ms: number) => void (now += ms));
+    const limit = createLimiter({
+      maxConcurrent: 10,
+      maxQueued: 10,
+      maxWaitMs: 1_000,
+      ratePerSecond: 2,
+      burst: 2,
+      now: () => now,
+      sleep,
+    });
+    await limit(async () => 1);
+    await limit(async () => 2);
+    expect(sleep).not.toHaveBeenCalled();
+    await limit(async () => 3); // waits ~500 ms for a token
+    expect(sleep).toHaveBeenCalledOnce();
+    const slow = createLimiter({
+      maxConcurrent: 10,
+      maxQueued: 10,
+      maxWaitMs: 100,
+      ratePerSecond: 1,
+      burst: 1,
+      now: () => now,
+      sleep,
+    });
+    await slow(async () => 1);
+    await expect(slow(async () => 2)).rejects.toMatchObject({ code: "THROTTLED" });
   });
 });

@@ -1,3 +1,4 @@
+import "server-only";
 import { errorFromResponse, isRetryable, RdpError } from "./errors";
 
 /** One RDP read: an exact GET path (under the stage URL) and its query. */

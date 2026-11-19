@@ -1,3 +1,4 @@
+import "server-only";
 import {
   epochMs,
   isMeasurementId,
@@ -60,7 +61,8 @@ type Entry = { expires: number; value: Promise<unknown> };
 /** Small TTL cache with in-flight de-duplication. Rejections are evicted immediately and never served again. */
 export function createTtlCache(now: () => number, maxEntries = 256) {
   const entries = new Map<string, Entry>();
-  return function cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
+  return Object.assign(cached, { clear: () => entries.clear() });
+  function cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
     const hit = entries.get(key);
     if (hit && hit.expires > now()) return hit.value as Promise<T>;
     entries.delete(key);
@@ -72,24 +74,84 @@ export function createTtlCache(now: () => number, maxEntries = 256) {
     });
     while (entries.size > maxEntries) entries.delete(entries.keys().next().value as string);
     return value;
-  };
+  }
 }
 
-/** Caps concurrent upstream reads; the RDP stage throttle (10 rps, burst 20) is shared with other consumers. */
-export function createLimiter(maxConcurrent: number, maxQueued: number) {
+export type LimiterOptions = {
+  maxConcurrent: number;
+  maxQueued: number;
+  /** Longest a call may wait for a slot or rate token before failing fast with THROTTLED. */
+  maxWaitMs: number;
+  ratePerSecond: number;
+  burst: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+/**
+ * Per-instance upstream budget: a concurrency cap plus a token bucket well under the RDP stage throttle (10 rps,
+ * burst 20), which is shared with isHPPOpen. Waiting is bounded; excess load is shed locally, never sent upstream.
+ * Across instances, a Vercel Firewall rate limit on `/api/*` is the outer bound (see ARCHITECTURE.md).
+ */
+export function createLimiter(options: LimiterOptions) {
+  const now = options.now ?? Date.now;
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   let active = 0;
-  const queue: Array<() => void> = [];
-  return async function limit<T>(run: () => Promise<T>): Promise<T> {
-    if (active >= maxConcurrent) {
-      if (queue.length >= maxQueued) throw new RdpError("THROTTLED");
-      await new Promise<void>((resolve) => queue.push(resolve));
+  let tokens = options.burst;
+  let refilled = now();
+  const queue: Array<{ resolve: () => void; timer: ReturnType<typeof setTimeout> }> = [];
+
+  function waitForToken(): number {
+    if (options.ratePerSecond === Number.POSITIVE_INFINITY) return 0;
+    const at = now();
+    tokens = Math.min(options.burst, tokens + ((at - refilled) / 1000) * options.ratePerSecond);
+    refilled = at;
+    if (tokens >= 1) {
+      tokens -= 1;
+      return 0;
     }
-    active++;
+    return Math.ceil(((1 - tokens) / options.ratePerSecond) * 1000);
+  }
+
+  function release() {
+    const next = queue.shift();
+    if (next) {
+      // Hand the slot straight to the next waiter so no new caller can slip past the cap.
+      clearTimeout(next.timer);
+      next.resolve();
+    } else {
+      active--;
+    }
+  }
+
+  return async function limit<T>(run: () => Promise<T>): Promise<T> {
+    const deadline = now() + options.maxWaitMs;
+    if (active >= options.maxConcurrent) {
+      if (queue.length >= options.maxQueued) throw new RdpError("THROTTLED");
+      await new Promise<void>((resolve, reject) => {
+        const waiter = {
+          resolve,
+          timer: setTimeout(() => {
+            queue.splice(queue.indexOf(waiter), 1);
+            reject(new RdpError("THROTTLED"));
+          }, options.maxWaitMs),
+        };
+        queue.push(waiter);
+      });
+    } else {
+      active++;
+    }
     try {
+      let waited = 0;
+      for (let wait = waitForToken(); wait > 0; wait = waitForToken()) {
+        waited += wait;
+        if (now() + wait > deadline || waited > options.maxWaitMs) throw new RdpError("THROTTLED");
+        await sleep(wait);
+      }
       return await run();
     } finally {
-      active--;
-      queue.shift()?.();
+      release();
     }
   };
 }
@@ -111,13 +173,24 @@ export type ClientOptions = {
   transport: RdpTransport;
   now?: () => number;
   maxConcurrent?: number;
+  /** Per-instance upstream request budget (default 3/s, burst 6). */
+  ratePerSecond?: number;
   log?: (event: { route: string; code: string; status: number }) => void;
 };
 
 export function createRdpClient(options: ClientOptions): RdpClient {
   const now = options.now ?? Date.now;
+  // The catalogue has its own slot so request-derived keys can never evict it.
+  const catalogueCache = createTtlCache(now, 1);
   const cached = createTtlCache(now);
-  const limit = createLimiter(options.maxConcurrent ?? 4, 32);
+  const limit = createLimiter({
+    maxConcurrent: options.maxConcurrent ?? 4,
+    maxQueued: 16,
+    maxWaitMs: 2_000,
+    ratePerSecond: options.ratePerSecond ?? 3,
+    burst: 6,
+    now,
+  });
   const log =
     options.log ??
     ((event) => {
@@ -135,12 +208,14 @@ export function createRdpClient(options: ClientOptions): RdpClient {
     } catch (error) {
       const failure = error instanceof RdpError ? error : new RdpError("UPSTREAM_ERROR");
       log({ route, code: failure.code, status: failure.status });
+      // RDP unpublished something our cached catalogue still lists: re-read the catalogue next time.
+      if (failure.code === "MEASUREMENT_NOT_FOUND") catalogueCache.clear();
       throw failure;
     }
   }
 
   function listMeasurements(): Promise<Catalogue> {
-    return cached("catalogue", CACHE_TTL_MS.catalogue, () =>
+    return catalogueCache("catalogue", CACHE_TTL_MS.catalogue, () =>
       call(
         "/v1/measurements",
         { path: "/v1/measurements", query: {}, timeoutMs: TIMEOUT_MS.short },

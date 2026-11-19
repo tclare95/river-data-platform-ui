@@ -37,7 +37,8 @@ export class RdpError extends Error {
 const UPSTREAM_CODES: ReadonlyMap<string, RdpErrorCode> = new Map([
   ["VALIDATION_ERROR", "INVALID_QUERY"],
   ["MEASUREMENT_NOT_FOUND", "MEASUREMENT_NOT_FOUND"],
-  ["NOT_FOUND", "MEASUREMENT_NOT_FOUND"],
+  // RDP's NOT_FOUND is an unknown *route* (wrong base URL or stage), never a missing measurement.
+  ["NOT_FOUND", "CONFIGURATION_ERROR"],
   ["INVALID_CURSOR", "INVALID_CURSOR"],
   ["CURSOR_EXPIRED", "CURSOR_EXPIRED"],
   ["CURSOR_STALE", "CURSOR_STALE"],
@@ -61,10 +62,12 @@ export function errorFromResponse(status: number, body: unknown): RdpError {
   );
 }
 
-/** Transient failures that a single bounded retry may resolve. */
+/**
+ * Transient failures that a single bounded retry may resolve. A 429 is not retried: the stage throttle is shared,
+ * and retrying would add load exactly when it is saturated.
+ */
 export function isRetryable(error: RdpError): boolean {
   return (
-    error.code === "THROTTLED" ||
     error.code === "STORAGE_UNAVAILABLE" ||
     error.code === "QUERY_TIMEOUT" ||
     error.code === "NETWORK_ERROR" ||

@@ -464,11 +464,19 @@ function parseHistoryMeta(meta: Json, measure: Measurement): HistoryMeta {
 }
 
 /** Rows must be strictly ascending and inside [from, to). */
-function assertOrdered(times: number[], from: string, to: string) {
-  const start = epochMs(from);
-  const end = epochMs(to);
-  let previous = Number.NEGATIVE_INFINITY;
-  for (const time of times) {
+/** Tick-precise sort key: RDP de-duplicates on exact 100 ns ticks, finer than Date's milliseconds. */
+function tickKey(timestamp: string): string {
+  return timestamp.replace(
+    /(?:\.(\d{1,7}))?Z$/,
+    (_match, fraction = "") => `.${fraction.padEnd(7, "0")}Z`,
+  );
+}
+
+function assertOrdered(times: string[], from: string, to: string) {
+  const start = tickKey(from);
+  const end = tickKey(to);
+  let previous = "";
+  for (const time of times.map(tickKey)) {
     if (!(time > previous) || time < start || time >= end) fail();
     previous = time;
   }
@@ -584,7 +592,7 @@ export function parseHistory(body: unknown, measure: Measurement): HistoryPage {
     if (meta.valueType !== "total" || integer(meta.periodSeconds) !== measure.periodSeconds) fail();
     const intervals = rows.map((row) => parseInterval(row, measure));
     assertOrdered(
-      intervals.map((row) => epochMs(row.label)),
+      intervals.map((row) => row.label),
       common.from,
       common.to,
     );
@@ -605,7 +613,7 @@ export function parseHistory(body: unknown, measure: Measurement): HistoryPage {
   if (meta.valueType !== undefined || meta.window !== undefined) fail();
   const observations = rows.map((row) => parseObservation(row, measure));
   assertOrdered(
-    observations.map((row) => epochMs(row.observedAt)),
+    observations.map((row) => row.observedAt),
     common.from,
     common.to,
   );
