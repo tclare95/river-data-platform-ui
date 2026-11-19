@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const pathname = vi.hoisted(() => ({ current: "/" }));
 vi.mock("next/navigation", () => ({ usePathname: () => pathname.current }));
 
-import HomePage from "@/app/page";
+import { PageMain } from "@/components/container";
 import { isActivePath } from "@/components/nav-link";
 import { SiteHeader } from "@/components/site-header";
 
@@ -30,7 +30,7 @@ describe("site header", () => {
     render(
       <>
         <SiteHeader />
-        <HomePage />
+        <PageMain>Content</PageMain>
       </>,
     );
     const href = screen.getByRole("link", { name: "Skip to content" }).getAttribute("href");
