@@ -40,7 +40,7 @@ The adapter is in `src/lib/rdp/` (see [architecture](docs/ARCHITECTURE.md#rdp-ad
 
 ## Next steps
 
-1. Open a measurement to see its latest reading, freshness, provenance and bounded history (chart and table) via `/api/measurements/{id}/history`.
+1. Add bounded history (chart and accessible table) to the measurement page via `/api/measurements/{id}/history`.
 2. Add a map only for verified positions when [RDP #129](https://github.com/tclare95/river-data-platform/issues/129) makes them available.
 
 Follow [AGENTS.md](AGENTS.md), [product guidance](docs/PRODUCT.md) and [architecture](docs/ARCHITECTURE.md).

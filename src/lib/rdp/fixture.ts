@@ -1,7 +1,8 @@
 /**
  * Fixture mode: sample responses in RDP's exact wire shapes, for local development and tests.
  *
- * Identities and metadata mirror RDP's published registry; every value is synthetic and generated
+ * Identities and metadata mirror RDP's published registry (the production selection plus one EA rain gauge,
+ * in registry order); every value is synthetic and generated
  * deterministically. The UI labels fixture mode visibly, and Vercel Production refuses it (see config.ts).
  * The fixture cursor is a plain offset, not RDP's AEAD cursor.
  */
@@ -42,15 +43,15 @@ export const FIXTURE_MEASURES: ReadonlyArray<FixtureMeasure> = [
   {
     wire: {
       ...EA,
-      measurementId: "ea-kegworth-level",
-      stationId: "ea-kegworth",
+      measurementId: "ea-shardlow-level",
+      stationId: "ea-shardlow",
       parameter: "level",
       unit: "mASD",
-      name: "Kegworth",
+      name: "Shardlow",
     },
-    providerMeasureId: "4074-level-stage-i-15_min-mASD",
-    lagMinutes: null,
-    sample: () => 0,
+    providerMeasureId: "4007-level-stage-i-15_min-mASD",
+    lagMinutes: 20,
+    sample: (i) => round(27.4 + 0.3 * Math.sin(i / 50), 3),
   },
   {
     wire: {
@@ -65,6 +66,45 @@ export const FIXTURE_MEASURES: ReadonlyArray<FixtureMeasure> = [
     providerMeasureId: "4007-flow--i-15_min-m3_s",
     lagMinutes: 190,
     sample: (i) => round(85 + 20 * Math.sin(i / 55), 2),
+  },
+  {
+    wire: {
+      ...EA,
+      measurementId: "ea-clifton-bridge-level",
+      stationId: "ea-clifton-bridge",
+      parameter: "level",
+      unit: "mASD",
+      name: "Clifton Bridge",
+    },
+    providerMeasureId: "4126-level-stage-i-15_min-mASD",
+    lagMinutes: 5,
+    sample: (i) => round(21.9 + 0.2 * Math.sin(i / 45), 3),
+  },
+  {
+    wire: {
+      ...EA,
+      measurementId: "ea-church-wilne-level",
+      stationId: "ea-church-wilne",
+      parameter: "level",
+      unit: "mASD",
+      name: "Church Wilne",
+    },
+    providerMeasureId: "4067-level-stage-i-15_min-mASD",
+    lagMinutes: 20,
+    sample: (i) => round(29.1 + 0.15 * Math.sin(i / 35), 3),
+  },
+  {
+    wire: {
+      ...EA,
+      measurementId: "ea-kegworth-level",
+      stationId: "ea-kegworth",
+      parameter: "level",
+      unit: "mASD",
+      name: "Kegworth",
+    },
+    providerMeasureId: "4074-level-stage-i-15_min-mASD",
+    lagMinutes: null,
+    sample: () => 0,
   },
   {
     wire: {
@@ -324,7 +364,8 @@ export function createFixtureTransport(now: () => number = Date.now): RdpTranspo
     const at = now();
     if (path === "/v1/measurements") {
       return {
-        data: FIXTURE_MEASURES.map((measure) => measure.wire),
+        // Fresh copies: a caller mutating the response must never alter the fixture registry.
+        data: FIXTURE_MEASURES.map((measure) => structuredClone(measure.wire)),
         meta: { retrievedAt: iso(at) },
       };
     }

@@ -49,7 +49,13 @@ MapLibre GL JS and Recharts are **provisional implementation choices** for futur
 - **Modes** (`config.ts`): `fixture` (synthetic, labelled on the page, refused on Vercel Production; also the default for a non-Vercel `next start`) or `live` (Vercel Preview → staging, Production → production, and only RDP-UI's own role and the matching stage URL). Every module holding config, credentials or transport imports `server-only`.
 - **Public display** (`public.ts`): only providers whose licence allows public display with attribution (currently the Environment Agency, OGL v3.0) are shown, and only minimal projections leave the server: no ingestion times, source references, health diagnostics, request IDs or upstream errors.
 
-`/api/measurements/{id}/history` is the only application API route: one bounded page of a fixed 2,000 rows over a window on whole UTC hours (default the 7 days to the next hour, at most 31 days), so distinct upstream queries stay few, with `nextCursor` continuation, fixed error codes (`INVALID_REQUEST`, `INVALID_CURSOR`, `RESTART_REQUIRED`, `NOT_FOUND`, `UNAVAILABLE`) and `s-maxage=60`. The home page calls the adapter directly from a Server Component.
+`/api/measurements/{id}/history` is the only application API route: one bounded page of a fixed 2,000 rows over a window on whole UTC hours (default the 7 days to the next hour, at most 31 days), so distinct upstream queries stay few, with `nextCursor` continuation, fixed error codes (`INVALID_REQUEST`, `INVALID_CURSOR`, `RESTART_REQUIRED`, `NOT_FOUND`, `UNAVAILABLE`) and `s-maxage=60`. Pages call the adapter directly from Server Components.
+
+## Discovery and detail pages
+
+- **Home** (`src/app/(home)/`): the public catalogue with RDP's latest state, grouped by RDP `stationId`. Search and the type filter are pure functions over the already-loaded catalogue (`src/lib/discovery.ts`) in one client component; the view is mirrored in `?q=&type=` with `history.replaceState` and also works as a plain GET form without JavaScript. Search covers only what RDP publishes (station name, parameter, provider, unit, ID); the type filter appears only when more than one type is published. Watercourse and coordinates are added when RDP #129 publishes them, never from a local list.
+- **Detail** (`/measurements/{measurementId}`): RDP's measurement ID is the stable URL. `layout.tsx` resolves the ID against the cached catalogue _before_ any streaming, so unknown, malformed and non-displayable IDs return a real 404 (indistinguishable from each other); the page then reads latest under its own `loading.tsx`. The home route group owns the only other loading boundary, because a root `loading.tsx` would stream every route and turn `notFound()` into a 200.
+- Provider quality is shown only when it is a plain word (EA gauge quality arrives as raw JSON text); structured values are omitted, not printed.
 
 ## Deployment configuration
 

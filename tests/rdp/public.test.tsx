@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { groupByStation } from "@/lib/discovery";
 import { MeasurementList } from "@/components/measurement-list";
 import type {
   PeriodTotalLatest,
@@ -75,16 +76,19 @@ describe("rendering an ineligible interval", () => {
   it("states the depth is not reported instead of showing a number", () => {
     const measurement: PublicMeasurement = {
       measurementId: "ea-stone-rainfall",
+      stationId: "ea-stone-raingauge",
       name: "Stone",
       parameter: "rainfall",
       unit: "mm",
       datum: "none",
       kind: "period_total",
+      expectedIntervalSeconds: 900,
       periodSeconds: 900,
       source: { label: "Environment Agency", attribution: "OGL" },
     };
-    render(<MeasurementList items={[{ measurement, latest: toPublicLatest(LATEST) }]} />);
-    const item = screen.getByRole("listitem");
+    const items = [{ measurement, latest: toPublicLatest(LATEST) }];
+    render(<MeasurementList groups={groupByStation(items)} />);
+    const item = screen.getByRole("link", { name: /Rainfall/ }).closest("li")!;
     expect(item).toHaveTextContent("Depth not reported (quality check failed)");
     expect(item.textContent).not.toMatch(/\d\s*mm/);
   });

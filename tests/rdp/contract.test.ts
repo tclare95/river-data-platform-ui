@@ -48,7 +48,10 @@ describe("catalogue", () => {
   it.each([
     ["a duplicate ID", (d: Record<string, unknown>[]) => d.push(clone(d[0]))],
     ["a malformed ID", (d: Record<string, unknown>[]) => (d[0].measurementId = "../health")],
-    ["a total in another unit", (d: Record<string, unknown>[]) => (d[3].unit = "m")],
+    [
+      "a total in another unit",
+      (d: Record<string, unknown>[]) => (d.find((m) => m.valueType === "total")!.unit = "m"),
+    ],
     ["an unknown value type", (d: Record<string, unknown>[]) => (d[0].valueType = "mean")],
   ])("rejects %s", async (_name, mutate) => {
     const body = clone(await read("/v1/measurements"));

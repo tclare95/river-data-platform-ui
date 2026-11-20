@@ -14,6 +14,8 @@
   --color-ink-muted: #4c635d;
   --color-line: #dbe4e0;
   --color-line-strong: #bfcdc7;
+  /* Form-control boundaries: at least 3:1 against surface and canvas (WCAG 1.4.11). */
+  --color-line-input: #7a8c86;
   --color-accent: #16695a;
   --color-accent-strong: #0e4d42;
   --color-accent-soft: #e2efea;
