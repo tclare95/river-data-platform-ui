@@ -61,7 +61,10 @@ type Entry = { expires: number; value: Promise<unknown> };
 /** Small TTL cache with in-flight de-duplication. Rejections are evicted immediately and never served again. */
 export function createTtlCache(now: () => number, maxEntries = 256) {
   const entries = new Map<string, Entry>();
-  return Object.assign(cached, { clear: () => entries.clear() });
+  return Object.assign(cached, {
+    clear: () => entries.clear(),
+    evict: (key: string) => entries.delete(key),
+  });
   function cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
     const hit = entries.get(key);
     if (hit && hit.expires > now()) return hit.value as Promise<T>;
@@ -306,13 +309,20 @@ export function createRdpClient(options: ClientOptions): RdpClient {
         },
       );
     // Cursor continuations are single-use in practice and bound to RDP's 30-minute expiry; only first pages cache.
-    return query.cursor === undefined
-      ? cached(
-          `history:${id}:${from}:${to}:${pageLimit}:${knownAt ?? ""}`,
-          CACHE_TTL_MS.history,
-          load,
-        )
-      : load();
+    const firstPageKey = `history:${id}:${from}:${to}:${pageLimit}:${knownAt ?? ""}`;
+    if (query.cursor === undefined) return cached(firstPageKey, CACHE_TTL_MS.history, load);
+    try {
+      return await load();
+    } catch (error) {
+      // A restart must fetch a new first page (and cursor), not the cached one whose continuation just failed.
+      if (
+        error instanceof RdpError &&
+        (error.code === "CURSOR_EXPIRED" || error.code === "CURSOR_STALE")
+      ) {
+        cached.evict(firstPageKey);
+      }
+      throw error;
+    }
   }
 
   return Object.freeze({

@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 describe("GET /api/measurements/{id}/history", () => {
-  it("returns one bounded public page with no internal provenance", async () => {
+  it("returns one bounded public page with observation, storage and retrieval times but no internal provenance", async () => {
     const response = await call("ea-colwick-level");
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toContain("s-maxage=60");
@@ -38,16 +38,20 @@ describe("GET /api/measurements/{id}/history", () => {
     });
     expect(body.data.history.coverage.status).toBe("unknown");
     expect(Object.keys(body.data.history.observations[0]).sort()).toEqual([
+      "ingestedAt",
       "observedAt",
       "quality",
       "revision",
       "value",
     ]);
+    // The three times stay distinct: observed (source), stored by RDP, retrieved.
+    const [row] = body.data.history.observations;
+    expect(row.ingestedAt).not.toBe(row.observedAt);
+    expect(body.data.history.requestAsOf).toMatch(/Z$/);
     const text = JSON.stringify(body);
     for (const hidden of [
-      "ingestedAt",
       "sourceReference",
-      "requestAsOf",
+      "providerMeasureId",
       "cutoff",
       "execute-api",
       "arn:aws",

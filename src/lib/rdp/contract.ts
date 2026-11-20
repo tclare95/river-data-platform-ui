@@ -465,7 +465,7 @@ function parseHistoryMeta(meta: Json, measure: Measurement): HistoryMeta {
 
 /** Rows must be strictly ascending and inside [from, to). */
 /** Tick-precise sort key: RDP de-duplicates on exact 100 ns ticks, finer than Date's milliseconds. */
-function tickKey(timestamp: string): string {
+export function tickKey(timestamp: string): string {
   return timestamp.replace(
     /(?:\.(\d{1,7}))?Z$/,
     (_match, fraction = "") => `.${fraction.padEnd(7, "0")}Z`,

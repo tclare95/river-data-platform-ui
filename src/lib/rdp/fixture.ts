@@ -17,6 +17,10 @@ type FixtureMeasure = {
   /** Minutes behind "now" of the newest sample, or null when never collected. */
   lagMinutes: number | null;
   sample: (index: number) => number;
+  /** Sample indexes (quarter-hours since the epoch) with no stored reading, to exercise missing intervals. */
+  missing?: (index: number) => boolean;
+  /** Sample indexes stored as a correction (revision 2). */
+  corrected?: (index: number) => boolean;
 };
 
 const EA = {
@@ -39,6 +43,9 @@ export const FIXTURE_MEASURES: ReadonlyArray<FixtureMeasure> = [
     providerMeasureId: "4009-level-stage-i-15_min-mASD",
     lagMinutes: 20,
     sample: (i) => round(20.6 + 0.25 * Math.sin(i / 40), 3),
+    // Three hours missing once a week and an occasional correction.
+    missing: (i) => i % 672 >= 300 && i % 672 < 312,
+    corrected: (i) => i % 500 === 0,
   },
   {
     wire: {
@@ -253,7 +260,7 @@ function history(measure: FixtureMeasure, query: Readonly<Record<string, string>
       t < to && t <= last;
       t += QUARTER_HOUR
     )
-      times.push(t);
+      if (!measure.missing?.(t / QUARTER_HOUR)) times.push(t);
   }
   const offset = query.cursor ? decodeCursor(query.cursor) : 0;
   const page = times.slice(offset, offset + limit);
@@ -274,7 +281,7 @@ function history(measure: FixtureMeasure, query: Readonly<Record<string, string>
     providerMeasureId: measure.providerMeasureId,
     ingestedAt: iso(t + 5 * 60_000),
     sourceReference: `fixture:${measure.wire.measurementId}/${iso(t)}`,
-    revision: 1,
+    revision: measure.corrected?.(t / QUARTER_HOUR) ? 2 : 1,
   });
   if (!total) {
     const data = page.map((t) => ({

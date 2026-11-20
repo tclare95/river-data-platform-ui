@@ -1,10 +1,11 @@
 /**
  * What this public site may show. RDP publishes measurements; this site additionally requires the provider's
  * licence to permit public display with attribution. Anything else is dropped before rendering or responding.
- * The projections below are the only shapes that leave the server: no ingestion times, internal references,
- * health diagnostics, request IDs or upstream errors.
+ * The projections below are the only shapes that leave the server. Times that distinguish when a value was observed,
+ * stored by RDP and retrieved are provenance and pass through; internal source references, provider measure IDs,
+ * error codes, health diagnostics, request IDs and upstream errors never do.
  */
-import type { HistoryPage, Latest, Measurement } from "./contract";
+import type { Health, HistoryPage, Latest, Measurement } from "./contract";
 
 export type PublicSource = { label: string; attribution: string };
 
@@ -88,6 +89,8 @@ export function toPublicHistory(page: HistoryPage) {
   const meta = {
     from: page.from,
     to: page.to,
+    /** When RDP answered the first page (its fixed read instant for the whole continuation). */
+    requestAsOf: page.requestAsOf,
     coverage: page.coverage,
     nextCursor: page.nextCursor,
   };
@@ -118,10 +121,25 @@ export function toPublicHistory(page: HistoryPage) {
       observedAt: row.observedAt,
       value: row.value,
       quality: row.quality,
+      /** When RDP durably stored this revision; never a substitute for `observedAt`. */
+      ingestedAt: row.ingestedAt,
       revision: row.revision,
     })),
   };
 }
 
+/**
+ * Collection provenance: when RDP last stored a reading, when it last asked the source and whether that worked.
+ * Error codes, lags and persistence diagnostics stay on the server.
+ */
+export function toPublicHealth(health: Health) {
+  return {
+    lastAttemptAt: health.lastAttemptAt,
+    lastPersistedAt: health.lastPersistedAt,
+    sourceState: health.sourceState,
+  };
+}
+
 export type PublicHistory = ReturnType<typeof toPublicHistory>;
+export type PublicHealth = ReturnType<typeof toPublicHealth>;
 export type PublicLatest = ReturnType<typeof toPublicLatest>;
