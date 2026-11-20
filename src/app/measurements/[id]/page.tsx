@@ -13,10 +13,12 @@ import { sentenceCase } from "@/lib/format";
 import {
   cadenceLabel,
   datumLabel,
+  datumSummary,
   measurementPath,
   parameterLabel,
   qualityLabel,
 } from "@/lib/labels";
+import { compareHref, isComparable } from "@/lib/compare";
 import { parseRange } from "@/lib/history/range";
 import { loadMeasurementDetail } from "@/lib/measurement-detail";
 import { epochMs } from "@/lib/rdp/contract";
@@ -68,7 +70,9 @@ function Provenance({
   const notAvailable = <span className="text-ink-muted">Not available</span>;
   return (
     <details className="mt-4">
-      <summary className="cursor-pointer font-medium text-accent">Source and collection</summary>
+      <summary className="cursor-pointer py-2 font-medium text-accent">
+        Source and collection
+      </summary>
       <dl className="mt-1 divide-y divide-line">
         <Fact term={latest?.kind === "period_total" ? "Latest period label" : "Latest observed"}>
           {observedAt ? <Time value={observedAt} /> : notAvailable}
@@ -217,24 +221,14 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
   const { measurement, latest, checkedAt, health, related, mode } = detail;
   const type = parameterLabel(measurement.parameter);
   const range = parseRange((await searchParams).range);
-  const datum = datumLabel(measurement.datum);
-  // Type, original unit and datum as RDP publishes them; a datum that does not apply is left out.
-  const summary = [
-    type,
-    measurement.unit,
-    measurement.datum === "none"
-      ? null
-      : measurement.datum === "unknown"
-        ? "Datum not known"
-        : `Datum ${measurement.datum}`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const datum = datumSummary(measurement);
+  // Original unit and datum as RDP publishes them; a datum that does not apply is left out.
+  const summary = [measurement.unit, datum].filter(Boolean).join(" · ");
   return (
     <PageMain>
       {back}
       <div className="mt-4">
-        <PageHeader title={measurement.name} description={summary} />
+        <PageHeader title={`${measurement.name} ${type.toLowerCase()}`} description={summary} />
       </div>
       {mode === "fixture" ? <FixtureNote className="mt-4" /> : null}
 
@@ -244,6 +238,20 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
 
       <div className="mt-10">
         <MeasurementHistory measurement={measurement} range={range} />
+        {isComparable(measurement) ? (
+          <p className="mt-4">
+            <Link
+              href={compareHref({
+                a: measurement.measurementId,
+                b: related.find(isComparable)?.measurementId,
+                range,
+              })}
+              className="link text-sm"
+            >
+              Compare with another measurement
+            </Link>
+          </p>
+        ) : null}
       </div>
 
       <section aria-labelledby="details" className="mt-10 max-w-copy">
@@ -253,7 +261,7 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
         <dl className="mt-1 divide-y divide-line">
           <Fact term="Type">{type}</Fact>
           <Fact term="Unit">{measurement.unit}</Fact>
-          <Fact term="Datum">{datum}</Fact>
+          {datum ? <Fact term="Datum">{datumLabel(measurement.datum)}</Fact> : null}
           <Fact term="Reporting">
             {cadenceLabel(
               measurement.kind,

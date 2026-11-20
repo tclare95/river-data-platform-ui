@@ -15,7 +15,7 @@ export type LatestView =
       value: string | null;
       /** When the value applies, phrased for its kind: an instant ("at …") or a period ("in the … to …"). */
       when: ReactNode;
-      /** Sentence lead for `when` on its own line: "Observed ", "Total " or nothing when the phrase is complete. */
+      /** Sentence lead for `when` on its own line: "Observed " or "Total ". */
       lead: string;
       freshness: PublicLatest["freshness"];
       quality: string | null;
@@ -36,7 +36,6 @@ export function describeLatest(
     // A period total, never an instantaneous reading: always say what period it covers.
     const period = formatPeriod(measurement.periodSeconds ?? 0);
     const periodEnd = latest.labelConvention !== "unverified" ? latest.periodEnd : null;
-    const verified = periodEnd !== null;
     const when =
       periodEnd !== null ? (
         <>
@@ -44,17 +43,17 @@ export function describeLatest(
         </>
       ) : latest.label ? (
         <>
-          {period} total labelled <Time value={latest.label} />
+          in the {period} labelled <Time value={latest.label} />
         </>
       ) : (
-        <>{period} total</>
+        <>in a {period} period</>
       );
     const reportable = latest.eligible !== false && latest.totalMm !== null;
     return {
       state: "available",
       value: reportable ? formatNumber(latest.totalMm!, measurement.unit) : null,
       when,
-      lead: verified ? "Total " : "",
+      lead: "Total ",
       freshness: latest.freshness,
       quality: latest.quality,
     };

@@ -4,6 +4,7 @@ import { NavLink } from "./nav-link";
 
 export const navigation = [
   { href: "/", label: "Explore" },
+  { href: "/compare", label: "Compare" },
   { href: "/about", label: "About" },
 ] as const;
 
@@ -22,7 +23,7 @@ export function SiteHeader() {
           className="flex min-h-10 items-center gap-2.5 rounded-md font-semibold tracking-tight"
         >
           <RiverMark />
-          <span>River Data Platform</span>
+          <span className="text-sm whitespace-nowrap sm:text-base">River Data Platform</span>
         </Link>
         <nav aria-label="Main">
           <ul className="flex items-center gap-1">
