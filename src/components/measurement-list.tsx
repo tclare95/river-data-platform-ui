@@ -1,89 +1,44 @@
-import { formatNumber, formatPeriod, formatTime, sentenceCase } from "@/lib/format";
-import type { OverviewItem } from "@/lib/overview";
-import type { PublicLatest } from "@/lib/rdp/public";
+import Link from "next/link";
+import { LatestLine } from "@/components/latest-reading";
+import type { StationGroup } from "@/lib/discovery";
+import { measurementPath, parameterLabel } from "@/lib/labels";
 
-function Time({ value }: { value: string }) {
-  return <time dateTime={value}>{formatTime(value)}</time>;
-}
-
-/** RDP's freshness verdict, shown only when it qualifies an available reading. */
-function FreshnessNote({ freshness }: { freshness: PublicLatest["freshness"] }) {
-  if (freshness === "fresh") return null;
+/** Stations with their published measurements; each measurement row links to its detail page. */
+export function MeasurementList({ groups }: { groups: readonly StationGroup[] }) {
   return (
-    <span className="text-ink-muted">
-      {freshness === "stale" ? " · Not recent" : " · Freshness unknown"}
-    </span>
-  );
-}
-
-function LatestSummary({ item }: { item: OverviewItem }) {
-  const { latest, measurement } = item;
-  if (!latest || latest.status === "unavailable")
-    return <p className="text-ink-muted">Latest reading unavailable</p>;
-  if (latest.status === "no_observations")
-    return <p className="text-ink-muted">No observations collected</p>;
-
-  if (latest.kind === "period_total") {
-    // A period total, never an instantaneous reading: always say what period it covers.
-    const period = formatPeriod(measurement.periodSeconds ?? 0);
-    const ending = latest.labelConvention !== "unverified" && latest.periodEnd;
-    const when = ending ? (
-      <>
-        in the {period} to <Time value={latest.periodEnd!} />
-      </>
-    ) : (
-      <>
-        {period} total labelled <Time value={latest.label!} />
-      </>
-    );
-    // An ineligible interval (missing/suspect quality) is not an observed depth: show no number for it.
-    if (latest.eligible === false || latest.totalMm === null) {
-      return (
-        <p>
-          <span className="text-ink-muted">Depth not reported (quality check failed)</span> {when}
-          <FreshnessNote freshness={latest.freshness} />
-        </p>
-      );
-    }
-    return (
-      <p>
-        <span className="font-medium">{formatNumber(latest.totalMm, measurement.unit)}</span> {when}
-        <FreshnessNote freshness={latest.freshness} />
-      </p>
-    );
-  }
-
-  return (
-    <p>
-      <span className="font-medium">{formatNumber(latest.value ?? 0, measurement.unit)}</span> at{" "}
-      <Time value={latest.observedAt!} />
-      <FreshnessNote freshness={latest.freshness} />
-    </p>
-  );
-}
-
-export function MeasurementList({ items }: { items: OverviewItem[] }) {
-  const attributions = [...new Set(items.map((item) => item.measurement.source.attribution))];
-  return (
-    <>
-      <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
-        {items.map((item) => (
-          <li key={item.measurement.measurementId} className="px-5 py-4 sm:px-6">
-            <h2 className="font-medium">
-              {item.measurement.name}{" "}
-              <span className="font-normal text-ink-muted">
-                {sentenceCase(item.measurement.parameter)}
-              </span>
-            </h2>
-            <div className="mt-1 text-sm">
-              <LatestSummary item={item} />
-            </div>
-          </li>
-        ))}
-      </ul>
-      {attributions.length > 0 ? (
-        <p className="mt-4 text-xs text-ink-muted">{attributions.join(" ")}</p>
-      ) : null}
-    </>
+    <ul className="space-y-4">
+      {groups.map((group) => (
+        <li
+          key={group.stationId}
+          className="overflow-hidden rounded-lg border border-line bg-surface"
+        >
+          <h2 className="px-5 pt-4 pb-3 text-lg font-semibold tracking-tight sm:px-6">
+            {group.name}
+          </h2>
+          <ul className="divide-y divide-line border-t border-line">
+            {group.items.map(({ measurement, latest }) => (
+              <li
+                key={measurement.measurementId}
+                className="relative transition-colors hover:bg-canvas"
+              >
+                <div className="flex flex-col gap-1 px-5 py-3.5 sm:grid sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-baseline sm:gap-6 sm:px-6">
+                  {/* The link's ::after covers the row, so the whole row is one target and one tab stop. */}
+                  <Link
+                    href={measurementPath(measurement.measurementId)}
+                    className="font-medium text-accent underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-accent"
+                  >
+                    <span className="sr-only">{group.name}</span>{" "}
+                    {parameterLabel(measurement.parameter)}
+                  </Link>
+                  <p className="text-sm">
+                    <LatestLine measurement={measurement} latest={latest} />
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </li>
+      ))}
+    </ul>
   );
 }

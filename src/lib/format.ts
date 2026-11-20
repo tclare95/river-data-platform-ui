@@ -24,3 +24,10 @@ export function formatPeriod(seconds: number): string {
 export function sentenceCase(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+const list = new Intl.ListFormat("en-GB", { style: "long", type: "conjunction" });
+
+/** "a", "a and b", "a, b and c". */
+export function listJoin(items: readonly string[]): string {
+  return list.format(items);
+}

@@ -28,11 +28,13 @@ export function publicMeasurements(measurements: readonly Measurement[]): Measur
 
 export type PublicMeasurement = {
   measurementId: string;
+  stationId: string;
   name: string;
   parameter: string;
   unit: string;
   datum: string;
   kind: Measurement["kind"];
+  expectedIntervalSeconds: number;
   periodSeconds: number | null;
   source: PublicSource;
 };
@@ -42,11 +44,13 @@ export function toPublicMeasurement(measure: Measurement): PublicMeasurement {
   if (!source) throw new Error("not public");
   return {
     measurementId: measure.measurementId,
+    stationId: measure.stationId,
     name: measure.name,
     parameter: measure.parameter,
     unit: measure.unit,
     datum: measure.datum,
     kind: measure.kind,
+    expectedIntervalSeconds: measure.expectedIntervalSeconds,
     periodSeconds: measure.kind === "period_total" ? measure.periodSeconds : null,
     source,
   };
