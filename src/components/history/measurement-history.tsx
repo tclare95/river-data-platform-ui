@@ -16,7 +16,7 @@ import { getRdpClient } from "@/lib/rdp/server";
 
 const STATUS_ID = "history-status";
 
-type KnownGap = CoverageGap & { reason: Exclude<CoverageGap["reason"], "unknown"> };
+export type KnownGap = CoverageGap & { reason: Exclude<CoverageGap["reason"], "unknown"> };
 
 const GAP_REASON: Record<KnownGap["reason"], string> = {
   not_collected: "Not collected",
@@ -24,18 +24,25 @@ const GAP_REASON: Record<KnownGap["reason"], string> = {
   legacy_unrecoverable: "Not recoverable from earlier records",
 };
 
-function knownGaps(coverage: Coverage): KnownGap[] {
+export function knownGaps(coverage: Coverage): KnownGap[] {
   return coverage.gaps.filter((gap): gap is KnownGap => gap.reason !== "unknown");
 }
 
-function RangeNav({ measurementId, range }: { measurementId: string; range: HistoryRange }) {
+/** Range links; each keeps the rest of the view (`hrefFor`) so the page re-renders with only the range changed. */
+export function RangeNav({
+  range,
+  hrefFor,
+}: {
+  range: HistoryRange;
+  hrefFor: (range: HistoryRange) => string;
+}) {
   return (
     <nav aria-label="History range">
       <ul className="flex gap-1 rounded-md border border-line-strong bg-surface p-1">
         {(Object.keys(HISTORY_RANGES) as HistoryRange[]).map((key) => (
           <li key={key}>
             <Link
-              href={`${measurementPath(measurementId)}?range=${key}`}
+              href={hrefFor(key)}
               scroll={false}
               aria-current={key === range ? "page" : undefined}
               className={cx(
@@ -53,7 +60,7 @@ function RangeNav({ measurementId, range }: { measurementId: string; range: Hist
 }
 
 /** RDP's coverage verdict in plain words. Unknown is never presented as complete. */
-function CoverageNote({ coverage }: { coverage: Coverage }) {
+export function CoverageNote({ coverage }: { coverage: Coverage }) {
   const gaps = knownGaps(coverage);
   return (
     <div className="text-sm text-ink-muted">
@@ -225,7 +232,10 @@ export function MeasurementHistory({
     <section aria-labelledby="history">
       <div className="flex flex-wrap items-center justify-between gap-3">
         {heading}
-        <RangeNav measurementId={measurement.measurementId} range={range} />
+        <RangeNav
+          range={range}
+          hrefFor={(key) => `${measurementPath(measurement.measurementId)}?range=${key}`}
+        />
       </div>
       <p id={STATUS_ID} role="status" className="sr-only" />
       <div className="mt-4">

@@ -75,6 +75,14 @@ describe("measurement history on the detail page", () => {
     );
   });
 
+  it("links to a comparison with another measurement at the station", async () => {
+    await renderDetail("ea-shardlow-level", "30d");
+    expect(screen.getByRole("link", { name: "Compare with another measurement" })).toHaveAttribute(
+      "href",
+      "/compare?a=ea-shardlow-level&b=ea-shardlow-flow&range=30d",
+    );
+  });
+
   it("defaults to 7 days for a missing or unsupported range", async () => {
     const history = await renderDetail("ea-shardlow-level", "365d");
     await within(history).findByRole("img");

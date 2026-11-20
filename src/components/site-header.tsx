@@ -4,6 +4,7 @@ import { NavLink } from "./nav-link";
 
 export const navigation = [
   { href: "/", label: "Explore" },
+  { href: "/compare", label: "Compare" },
   { href: "/about", label: "About" },
 ] as const;
 

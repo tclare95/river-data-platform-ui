@@ -198,7 +198,7 @@ describe("measurement detail page", () => {
     });
     await renderDetail("ea-stone-rainfall");
     const latest = screen.getByRole("region", { name: /reading$/ });
-    expect(latest).toHaveTextContent(/15 minutes total labelled/);
+    expect(latest).toHaveTextContent(/Total in the 15 minutes labelled/);
     expect(latest).not.toHaveTextContent(/Total 15 minutes/);
   });
 });
