@@ -49,7 +49,7 @@ describe("measurement detail page", () => {
   it("shows a fresh reading with observed and checked times, unit, datum and source", async () => {
     await renderDetail("ea-colwick-level");
     expect(screen.getByRole("heading", { level: 1, name: "Colwick" })).toBeInTheDocument();
-    expect(screen.getByText("Water level · Environment Agency")).toBeInTheDocument();
+    expect(screen.getByText("Water level · mASD · Datum ASD")).toBeInTheDocument();
     const latest = screen.getByRole("region", { name: "Latest reading" });
     expect(latest).toHaveTextContent(/\d+(\.\d+)? mASD/);
     expect(latest).toHaveTextContent(/Observed at/);

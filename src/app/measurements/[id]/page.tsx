@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { PageMain } from "@/components/container";
+import { MeasurementHistory } from "@/components/history/measurement-history";
 import { describeLatest, FRESHNESS_LABEL, NO_DEPTH, Time } from "@/components/latest-reading";
 import { PageHeader } from "@/components/page-header";
 import { Attribution, FixtureNote } from "@/components/provenance";
@@ -16,8 +17,10 @@ import {
   parameterLabel,
   qualityLabel,
 } from "@/lib/labels";
+import { parseRange } from "@/lib/history/range";
 import { loadMeasurementDetail } from "@/lib/measurement-detail";
-import type { PublicLatest, PublicMeasurement } from "@/lib/rdp/public";
+import { epochMs } from "@/lib/rdp/contract";
+import type { PublicHealth, PublicLatest, PublicMeasurement } from "@/lib/rdp/public";
 
 type Props = PageProps<"/measurements/[id]">;
 
@@ -27,6 +30,68 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (detail.status !== "ok") return { title: "Measurement" };
   const { name, parameter } = detail.measurement;
   return { title: `${name} ${parameterLabel(parameter).toLowerCase()}` };
+}
+
+/** Whole hours and minutes, or days and hours past two days: "3 h 10 min", "4 d 2 h". */
+function ageText(ms: number): string | null {
+  if (!(ms > 0)) return null;
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes >= 2 * 1440)
+    return `${Math.floor(minutes / 1440)} d ${Math.floor((minutes % 1440) / 60)} h`;
+  if (minutes >= 60) return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+  return `${minutes} min`;
+}
+
+const SOURCE_STATE: Record<PublicHealth["sourceState"], string> = {
+  healthy: "Responding",
+  failed: "Last request failed",
+  unknown: "Not known",
+};
+
+function Provenance({
+  measurement,
+  latest,
+  checkedAt,
+  health,
+}: {
+  measurement: PublicMeasurement;
+  latest: PublicLatest | null;
+  checkedAt: string | null;
+  health: PublicHealth | null;
+}) {
+  const observedAt =
+    latest?.status === "available"
+      ? latest.kind === "instantaneous"
+        ? latest.observedAt
+        : latest.label
+      : null;
+  const notAvailable = <span className="text-ink-muted">Not available</span>;
+  return (
+    <details className="mt-4">
+      <summary className="cursor-pointer font-medium text-accent">Source and collection</summary>
+      <dl className="mt-1 divide-y divide-line">
+        <Fact term={latest?.kind === "period_total" ? "Latest period label" : "Latest observed"}>
+          {observedAt ? <Time value={observedAt} /> : notAvailable}
+        </Fact>
+        <Fact term="Latest stored by RDP">
+          {health?.lastPersistedAt ? <Time value={health.lastPersistedAt} /> : notAvailable}
+        </Fact>
+        <Fact term="Last source request">
+          {health?.lastAttemptAt ? (
+            <>
+              <Time value={health.lastAttemptAt} /> · {SOURCE_STATE[health.sourceState]}
+            </>
+          ) : (
+            notAvailable
+          )}
+        </Fact>
+        <Fact term="Checked">{checkedAt ? <Time value={checkedAt} /> : notAvailable}</Fact>
+        <Fact term="Measurement ID">
+          <code className="text-sm break-all">{measurement.measurementId}</code>
+        </Fact>
+      </dl>
+    </details>
+  );
 }
 
 function LatestSection({
@@ -68,6 +133,10 @@ function LatestSection({
 
   const stale = view.freshness === "stale";
   const quality = qualityLabel(view.quality);
+  const age =
+    stale && latest?.kind === "instantaneous" && latest.observedAt && checkedAt
+      ? ageText(epochMs(checkedAt) - epochMs(latest.observedAt))
+      : null;
   return (
     <section aria-labelledby="latest">
       {heading(stale ? "Last known reading" : "Latest reading")}
@@ -85,7 +154,7 @@ function LatestSection({
             {stale ? (
               <span className="font-normal text-ink-muted">
                 {" "}
-                · No newer reading has been collected.
+                · {age ? `${age} old when checked. ` : ""}No newer reading has been collected.
               </span>
             ) : null}
           </p>
@@ -120,7 +189,7 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
   );
 }
 
-export default async function MeasurementPage({ params }: Props) {
+export default async function MeasurementPage({ params, searchParams }: Props) {
   await connection();
   const detail = await loadMeasurementDetail((await params).id);
   if (detail.status === "not_found") notFound();
@@ -145,43 +214,61 @@ export default async function MeasurementPage({ params }: Props) {
     );
   }
 
-  const { measurement, latest, checkedAt, related, mode } = detail;
+  const { measurement, latest, checkedAt, health, related, mode } = detail;
   const type = parameterLabel(measurement.parameter);
+  const range = parseRange((await searchParams).range);
+  const datum = datumLabel(measurement.datum);
+  // Type, original unit and datum as RDP publishes them; a datum that does not apply is left out.
+  const summary = [
+    type,
+    measurement.unit,
+    measurement.datum === "none"
+      ? null
+      : measurement.datum === "unknown"
+        ? "Datum not known"
+        : `Datum ${measurement.datum}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <PageMain>
       {back}
       <div className="mt-4">
-        <PageHeader
-          title={measurement.name}
-          description={`${type} · ${measurement.source.label}`}
-        />
+        <PageHeader title={measurement.name} description={summary} />
       </div>
       {mode === "fixture" ? <FixtureNote className="mt-4" /> : null}
 
-      <div className="mt-8 grid gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:gap-12">
+      <div className="mt-8 max-w-copy">
         <LatestSection measurement={measurement} latest={latest} checkedAt={checkedAt} />
-
-        <section aria-labelledby="details">
-          <h2 id="details" className="text-lg font-semibold tracking-tight">
-            Details
-          </h2>
-          <dl className="mt-1 divide-y divide-line">
-            <Fact term="Type">{type}</Fact>
-            <Fact term="Unit">{measurement.unit}</Fact>
-            <Fact term="Datum">{datumLabel(measurement.datum)}</Fact>
-            <Fact term="Reporting">
-              {cadenceLabel(
-                measurement.kind,
-                measurement.periodSeconds ?? measurement.expectedIntervalSeconds,
-              )}
-            </Fact>
-            <Fact term="Source">{measurement.source.label}</Fact>
-            <Fact term="Measurement ID">
-              <code className="text-sm break-all">{measurement.measurementId}</code>
-            </Fact>
-          </dl>
-        </section>
       </div>
+
+      <div className="mt-10">
+        <MeasurementHistory measurement={measurement} range={range} />
+      </div>
+
+      <section aria-labelledby="details" className="mt-10 max-w-copy">
+        <h2 id="details" className="text-lg font-semibold tracking-tight">
+          Details
+        </h2>
+        <dl className="mt-1 divide-y divide-line">
+          <Fact term="Type">{type}</Fact>
+          <Fact term="Unit">{measurement.unit}</Fact>
+          <Fact term="Datum">{datum}</Fact>
+          <Fact term="Reporting">
+            {cadenceLabel(
+              measurement.kind,
+              measurement.periodSeconds ?? measurement.expectedIntervalSeconds,
+            )}
+          </Fact>
+          <Fact term="Source">{measurement.source.label}</Fact>
+        </dl>
+        <Provenance
+          measurement={measurement}
+          latest={latest}
+          checkedAt={checkedAt}
+          health={health}
+        />
+      </section>
 
       {related.length > 0 ? (
         <section aria-labelledby="related" className="mt-10">

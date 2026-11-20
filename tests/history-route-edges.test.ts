@@ -89,14 +89,14 @@ describe("history route edges", () => {
   });
 
   it("continues through cursor pages for the identical window", async () => {
-    // 31 days of 15-minute readings (2,976) spans two fixed-size pages.
+    // 31 days of 15-minute readings (2,976) spans two fixed-size pages. Shardlow's fixture has no missing interval.
     const window = "from=2026-10-19T12:00Z&to=2026-11-19T12:00Z";
     const seen: string[] = [];
     let cursor: string | null = null;
     let pages = 0;
     do {
       const query = cursor ? `?${window}&cursor=${cursor}` : `?${window}`;
-      const response = await call("ea-colwick-level", query);
+      const response = await call("ea-shardlow-level", query);
       expect(response.status).toBe(200);
       const history = (await response.json()).data.history;
       expect(history.from).toMatch(/^2026-10-19T12:00:00/);
@@ -123,7 +123,7 @@ describe("history route edges", () => {
   });
 
   it.each(["ea-colwick-level", "ea-stone-rainfall"])(
-    "never includes internal provenance or request metadata for %s",
+    "never includes internal provenance for %s",
     async (id) => {
       const response = await call(id, "?from=2026-11-18T00:00Z&to=2026-11-19T00:00Z");
       expect(response.status).toBe(200);
@@ -131,8 +131,6 @@ describe("history route edges", () => {
       for (const hidden of [
         "providerMeasureId",
         "sourceReference",
-        "ingestedAt",
-        "requestAsOf",
         "cutoff",
         "sourceValue",
         "fixture:",

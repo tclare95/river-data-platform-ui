@@ -3,8 +3,10 @@ import { cache } from "react";
 import { isMeasurementId } from "@/lib/rdp/contract";
 import {
   publicMeasurements,
+  toPublicHealth,
   toPublicLatest,
   toPublicMeasurement,
+  type PublicHealth,
   type PublicLatest,
   type PublicMeasurement,
 } from "@/lib/rdp/public";
@@ -27,6 +29,8 @@ export type MeasurementDetail =
       latest: PublicLatest | null;
       /** When RDP answered the latest read; distinct from when the value was observed. */
       checkedAt: string | null;
+      /** Collection provenance, or `null` when RDP's health read failed (shown as not available). */
+      health: PublicHealth | null;
     })
   | { status: "not_found" }
   | { status: "unavailable" };
@@ -62,17 +66,17 @@ export const loadPublishedMeasurement = cache(async (id: string): Promise<Publis
 export const loadMeasurementDetail = cache(async (id: string): Promise<MeasurementDetail> => {
   const published = await loadPublishedMeasurement(id);
   if (published.status !== "ok") return published;
-  let latest: PublicLatest | null = null;
-  let checkedAt: string | null = null;
-  try {
-    const batch = await getRdpClient().getLatest([id]);
-    const item = batch.items.find((entry) => entry.measurementId === id);
-    if (item) {
-      latest = toPublicLatest(item);
-      checkedAt = batch.retrievedAt;
-    }
-  } catch {
-    // Shown as unavailable.
-  }
-  return { ...published, latest, checkedAt };
+  const rdp = getRdpClient();
+  const [batch, health] = await Promise.all([
+    rdp.getLatest([id]).catch(() => null),
+    rdp.getHealth(id).then(toPublicHealth, () => null),
+  ]);
+  const item = batch?.items.find((entry) => entry.measurementId === id);
+  return {
+    ...published,
+    // A failed latest read is shown as unavailable, never replaced by health or history.
+    latest: item ? toPublicLatest(item) : null,
+    checkedAt: item && batch ? batch.retrievedAt : null,
+    health,
+  };
 });
