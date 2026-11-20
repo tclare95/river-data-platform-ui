@@ -48,8 +48,10 @@ describe("measurement detail page", () => {
 
   it("shows a fresh reading with observed and checked times, unit, datum and source", async () => {
     await renderDetail("ea-colwick-level");
-    expect(screen.getByRole("heading", { level: 1, name: "Colwick" })).toBeInTheDocument();
-    expect(screen.getByText("Water level · mASD · Datum ASD")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Colwick water level" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("mASD · Local gauge datum (ASD)")).toBeInTheDocument();
     const latest = screen.getByRole("region", { name: "Latest reading" });
     expect(latest).toHaveTextContent(/\d+(\.\d+)? mASD/);
     expect(latest).toHaveTextContent(/Observed at/);
@@ -82,7 +84,8 @@ describe("measurement detail page", () => {
     const latest = screen.getByRole("region", { name: "Last known reading" });
     expect(latest).toHaveTextContent(/m3\/s/);
     expect(latest).toHaveTextContent("Not recent");
-    expect(fact("Datum")).toHaveTextContent("Not known");
+    // Flow has no vertical datum: RDP's `unknown` is not shown as a missing one.
+    expect(screen.queryByText("Datum", { selector: "dt" })).toBeNull();
   });
 
   it("links to the other measurements at the same station", async () => {
@@ -108,7 +111,7 @@ describe("measurement detail page", () => {
     expect(latest).toHaveTextContent(/Total in the 15 minutes to/);
     expect(latest).not.toHaveTextContent(/Observed at/);
     expect(fact("Reporting")).toHaveTextContent("Totals per 15 minutes");
-    expect(fact("Datum")).toHaveTextContent("Not applicable");
+    expect(screen.queryByText("Datum", { selector: "dt" })).toBeNull();
   });
 
   it("shows the reading as unavailable, not a value, when the latest read fails", async () => {

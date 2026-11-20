@@ -87,10 +87,10 @@ describe("compare page", () => {
       "Different kinds of measurement, so each chart has its own scale.",
     );
     expect(within(history).getByRole("region", { name: "Shardlow water level" })).toHaveTextContent(
-      "mASD · Datum ASD",
+      "mASD · Local gauge datum (ASD)",
     );
     expect(within(history).getByRole("region", { name: "Shardlow flow" })).toHaveTextContent(
-      "m3/s · Datum not known",
+      "m3/s · Environment Agency",
     );
     expect(within(history).getByRole("link", { name: "30 days" })).toHaveAttribute(
       "href",
@@ -166,12 +166,18 @@ describe("compare page", () => {
     await renderCompare({ a: "ea-shardlow-level", b: "ea-shardlow-flow" });
     const flow = screen.getByRole("region", { name: "Shardlow flow" });
     expect(await within(flow).findByText("No readings in the last 7 days")).toBeVisible();
-    expect(flow).toHaveTextContent("RDP hasn’t verified that this record is complete.");
+    expect(flow).toHaveTextContent("This record hasn’t been verified as complete.");
   });
 
   it("asks for two different measurements", async () => {
     await renderCompare({ a: "ea-shardlow-level", b: "ea-shardlow-level" });
     expect(screen.getByRole("alert")).toHaveTextContent("Choose two different measurements.");
+    const second = screen.getByRole("combobox", { name: "Second measurement" });
+    expect(second).toHaveAttribute("aria-invalid", "true");
+    expect(second).toHaveAccessibleDescription("Choose two different measurements.");
+    expect(screen.getByRole("combobox", { name: "First measurement" })).not.toHaveAttribute(
+      "aria-invalid",
+    );
     expect(screen.queryByRole("region", { name: "History" })).toBeNull();
   });
 

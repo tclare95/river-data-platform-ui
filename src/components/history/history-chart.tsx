@@ -45,6 +45,8 @@ export type HistoryChartProps = {
   valueRange?: readonly [number, number];
   /** Fixed y-axis width, so stacked charts' time axes line up exactly. */
   yAxisWidth?: number;
+  /** Show the "parameter (unit)" caption above the plot; off where the surrounding panel already says it. */
+  caption?: boolean;
   /** Where the readings are listed, for the accessible summary. */
   tableHint?: string;
 };
@@ -226,9 +228,11 @@ export function HistoryChart(props: HistoryChartProps): JSX.Element {
 
   return (
     <figure className="m-0">
-      <figcaption className="mb-2 text-xs text-ink-muted">
-        {parameterLabel} ({unit})
-      </figcaption>
+      {props.caption === false ? null : (
+        <figcaption className="mb-2 text-xs text-ink-muted">
+          {parameterLabel} ({unit})
+        </figcaption>
+      )}
       {/* Fixed height reserved before Recharts measures on the client, so hydration causes no layout shift. */}
       <div role="img" aria-label={summarise(props, series)} className="h-64 w-full sm:h-80">
         <ResponsiveContainer width="100%" height="100%">

@@ -11,7 +11,7 @@ import { loadComparisonPair } from "@/lib/compare-load";
 import type { HistoryResult } from "@/lib/history/load";
 import { HISTORY_RANGES, type HistoryRange } from "@/lib/history/range";
 import { buildSeries } from "@/lib/history/series";
-import { measurementPath, parameterLabel } from "@/lib/labels";
+import { datumSummary, measurementPath, parameterLabel } from "@/lib/labels";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
 const STATUS_ID = "compare-status";
@@ -20,12 +20,6 @@ const SYNC_ID = "compare";
 const Y_AXIS_WIDTH = 56;
 
 type Side = { measurement: PublicMeasurement; result: HistoryResult };
-
-function datumText(measurement: PublicMeasurement): string | null {
-  if (measurement.datum === "none") return null;
-  if (measurement.datum === "unknown") return "Datum not known";
-  return `Datum ${measurement.datum}`;
-}
 
 function title(measurement: PublicMeasurement) {
   return `${measurement.name} ${parameterLabel(measurement.parameter).toLowerCase()}`;
@@ -59,7 +53,7 @@ function SeriesPanel({
   const span = HISTORY_RANGES[range].label;
   const label = parameterLabel(measurement.parameter);
   const headingId = `series-${index}`;
-  const facts = [measurement.unit, datumText(measurement), measurement.source.label]
+  const facts = [measurement.unit, datumSummary(measurement), measurement.source.label]
     .filter(Boolean)
     .join(" · ");
 
@@ -101,6 +95,7 @@ function SeriesPanel({
           syncId={SYNC_ID}
           valueRange={shared}
           yAxisWidth={Y_AXIS_WIDTH}
+          caption={false}
           tableHint="Both series are in the Compared readings table below."
         />
         <div className="space-y-1">
@@ -153,8 +148,7 @@ function ComparisonBody({ sides, range }: { sides: [Side, Side]; range: HistoryR
     <div className="space-y-4">
       <Announce targetId={STATUS_ID} text={`Showing ${span} for both measurements`} />
       <p className="text-sm text-ink-muted">
-        {basis.shared ? "Same unit, so both charts share one scale." : SCALE_NOTE[basis.reason]}{" "}
-        Both charts cover the same period.
+        {basis.shared ? "Same unit, so both charts share one scale." : SCALE_NOTE[basis.reason]}
       </p>
       <SeriesPanel side={a} index={0} range={range} shared={shared} />
       <SeriesPanel side={b} index={1} range={range} shared={shared} />
@@ -165,7 +159,7 @@ function ComparisonBody({ sides, range }: { sides: [Side, Side]; range: HistoryR
       ) : null}
       {withReadings.length > 0 ? (
         <details>
-          <summary className="cursor-pointer font-medium text-accent">
+          <summary className="cursor-pointer py-2 font-medium text-accent">
             Compared readings table ({rows.length.toLocaleString("en-GB")} times)
           </summary>
           <div className="mt-3">

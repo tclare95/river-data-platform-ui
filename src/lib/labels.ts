@@ -27,7 +27,20 @@ export function cadenceLabel(kind: "instantaneous" | "period_total", seconds: nu
 export function datumLabel(datum: string): string {
   if (datum === "unknown") return "Not known";
   if (datum === "none") return "Not applicable";
+  if (datum === "ASD") return "Local gauge datum (ASD)";
   return datum;
+}
+
+/**
+ * The datum phrase for a measurement's summary, or `null` where a datum doesn't apply: RDP publishes `unknown` for
+ * flow, which has no vertical datum, so only a level says its datum is not known.
+ */
+export function datumSummary(measurement: { parameter: string; datum: string }): string | null {
+  if (measurement.datum === "none") return null;
+  if (measurement.datum === "unknown")
+    return measurement.parameter === "level" ? "Datum not known" : null;
+  if (measurement.datum === "ASD") return "Local gauge datum (ASD)";
+  return `Datum ${measurement.datum}`;
 }
 
 const QUALITY_WORD = /^[A-Za-z][A-Za-z -]{0,39}$/;

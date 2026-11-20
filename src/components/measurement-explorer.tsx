@@ -104,7 +104,7 @@ export function MeasurementExplorer({
             placeholder="Station name or measurement type"
             autoComplete="off"
             spellCheck={false}
-            className="mt-1.5 block h-11 w-full max-w-copy rounded-md border border-line-input bg-surface px-3 text-base placeholder:text-ink-muted/70 focus-visible:border-accent"
+            className="mt-1.5 block h-11 w-full max-w-copy rounded-md border border-line-input bg-surface px-3 text-base placeholder:text-ink-muted focus-visible:border-accent"
           />
         </div>
         {/* Shown whenever it can narrow results, or when the URL already applied a type. */}
@@ -115,7 +115,7 @@ export function MeasurementExplorer({
               {[null, ...types].map((value) => (
                 <label
                   key={value ?? "all"}
-                  className="inline-flex h-9 cursor-pointer items-center rounded-full border border-line-strong bg-surface px-3.5 text-sm has-checked:border-accent has-checked:bg-accent-soft has-checked:font-semibold has-checked:text-accent-strong has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-accent"
+                  className="inline-flex h-10 cursor-pointer items-center rounded-full border border-line-strong bg-surface px-3.5 text-sm has-checked:border-accent has-checked:bg-accent-soft has-checked:font-semibold has-checked:text-accent-strong has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-accent"
                 >
                   <input
                     type="radio"

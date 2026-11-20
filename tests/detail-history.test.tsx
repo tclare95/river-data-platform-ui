@@ -67,7 +67,7 @@ describe("measurement history on the detail page", () => {
     expect(count).toBeGreaterThan(2000);
     expect(count).toBeLessThan(30 * 96);
     expect(history).toHaveTextContent(/Readings are missing in \d+ places/);
-    expect(history).toHaveTextContent("RDP hasn’t verified that this record is complete.");
+    expect(history).toHaveTextContent("This record hasn’t been verified as complete.");
     expect(history).not.toHaveTextContent(/verified complete for this period/);
     expect(history).toHaveTextContent(/Retrieved/);
     expect(document.getElementById("history-status")).toHaveTextContent(
@@ -138,7 +138,7 @@ describe("measurement history on the detail page", () => {
     expect(
       within(history).getByText("No readings in the last 7 days", { selector: "p.font-medium" }),
     ).toBeVisible();
-    expect(history).toHaveTextContent("RDP hasn’t verified that this record is complete.");
+    expect(history).toHaveTextContent("This record hasn’t been verified as complete.");
   });
 
   it("lists known gaps by reason for partial coverage", async () => {

@@ -493,3 +493,52 @@ describe("loadHistory: fixture transport", () => {
     expect(series.count).toBe(result.observations.length);
   });
 });
+
+describe("assembled window cache", () => {
+  function counting(fail: () => boolean) {
+    const fixture = createFixtureTransport(() => NOW);
+    const calls = { history: 0 };
+    const transport: RdpTransport = async (request) => {
+      if (request.path.endsWith("/observations")) {
+        calls.history++;
+        if (fail()) throw new RdpError("STORAGE_UNAVAILABLE", 503);
+      }
+      return fixture(request);
+    };
+    return { calls, client: createRdpClient({ mode: "fixture", transport, log: () => undefined }) };
+  }
+
+  it("reads a multi-page window once, including its continuation pages", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: NOW });
+    try {
+      const { calls, client } = counting(() => false);
+      const window = rangeWindow("30d", NOW);
+      const [first, concurrent] = await Promise.all([
+        loadHistory(client, ID, "instantaneous", window),
+        loadHistory(client, ID, "instantaneous", window),
+      ]);
+      expect(first.status).toBe("ok");
+      expect(concurrent).toBe(first);
+      const pages = calls.history;
+      expect(pages).toBeGreaterThan(1);
+      await loadHistory(client, ID, "instantaneous", window);
+      expect(calls.history).toBe(pages);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never serves a failure from cache", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: NOW });
+    try {
+      let failing = true;
+      const { client } = counting(() => failing);
+      const window = rangeWindow("7d", NOW);
+      expect((await loadHistory(client, ID, "instantaneous", window)).status).toBe("unavailable");
+      failing = false;
+      expect((await loadHistory(client, ID, "instantaneous", window)).status).toBe("ok");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

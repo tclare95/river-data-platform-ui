@@ -62,6 +62,16 @@ Recharts (pinned) draws the history chart. MapLibre GL JS remains a **provisiona
 - **Page** (`src/components/history/`): `MeasurementHistory` streams under its own `Suspense` (keyed by range) via a never-rejecting promise and `use`, so the latest reading is never held back. `HistoryChart` and `ObservationTable` are the only client components; the table (newest first, 100 rows per page, values exactly as returned, observed/stored times and revision) sits in a `<details>` disclosure below the chart.
 - **Upstream cost**: a detail view makes at most latest + health + one history page per 2,000 readings (two for 30 days at 15 minutes), each first read cached for 60 s.
 
+## Comparison
+
+`/compare?a=&b=&range=` (`src/app/compare/`, `src/components/compare/`, `src/lib/compare*.ts`) compares two instantaneous measurements; rainfall period totals are left out until their history view exists. It is a plain GET form, so it works without JavaScript, and IDs are matched only against the public catalogue: unknown, restricted, rainfall and malformed IDs all read "isn't available to compare".
+
+- **Time**: one window (`rangeWindow`, computed once) for both series, so both cover exactly the same period. The two charts are stacked with a fixed y-axis width, so their time axes line up, and their hover cursors are synced by timestamp (`syncMethod="value"`).
+- **Units and datums** (`scaleBasis`): each chart keeps its own unit, datum and y-scale. The charts share one scale only when parameter and unit match and, for level at different stations, both sit on a shared national datum (`AOD`/`ODN`). EA's station-local `ASD` and `unknown` never share a scale. Every level RDP publishes today is station-local, so level comparisons always use separate scales, and a one-line note says why. Values are never overlaid as comparable magnitudes, transformed or normalised.
+- **Accessible data**: each chart is a `role="img"` with its own summary. The "Compared readings table" lists the union of exact source times, newest first: a time present in only one series says "No reading" for the other. Nothing is shifted, resampled or interpolated.
+- **States**: each series loads independently through the same all-or-nothing history loader, so one series can be unavailable, too large or empty while the other still renders.
+- **Upstream cost**: catalogue (cached) + one history page per 2,000 readings per series. That is at most four reads for 30 days, the same as two detail-page histories and sharing their 60 s cache.
+
 ## Discovery and detail pages
 
 - **Home** (`src/app/(home)/`): the public catalogue with RDP's latest state, grouped by RDP `stationId`. Search and the type filter are pure functions over the already-loaded catalogue (`src/lib/discovery.ts`) in one client component; the view is mirrored in `?q=&type=` with `history.replaceState` and also works as a plain GET form without JavaScript. Search covers only what RDP publishes (station name, parameter, provider, unit, ID); the type filter appears only when more than one type is published. Watercourse and coordinates are added when RDP #129 publishes them, never from a local list.
@@ -75,8 +85,9 @@ Each step is a separately approved operator action ([RDP PRODUCTION-READ-API.md#
 1. Release the RDP read handler that admits `river-data-platform-<stage>-ui-vercel-<environment>` on the four observation routes.
 2. Using operator credentials, render (`read_api_iam.py --ui`) and create that stage's caller stack `river-data-platform-<stage>-read-ui-caller`. It must be in the same Vercel team as the existing OIDC provider.
 3. In this Vercel project, enable OIDC (team issuer mode) and set server-only variables per environment: `RDP_DATA_MODE=live`, `RDP_AWS_REGION=eu-west-1`, `RDP_READ_API_URL=https://<api-id>.execute-api.eu-west-1.amazonaws.com/<stage>`, `RDP_ROLE_ARN=<UiRoleArn output>`. Preview binds to staging and Production to production.
-4. Add the Vercel Firewall rate-limit rule for `/api/measurements/*`.
-5. Verify signed reads on a Preview deployment before Production. Until steps 1–3 are done, live mode shows _unavailable_ (403), never sample data.
+4. Add the Vercel Firewall rate-limit rule for `/api/measurements/*`, `/measurements/*` and `/compare` (each page view can make upstream reads).
+
+Status (20 November 2026): steps 1–3 are done for both stages, and signed reads are verified on Preview (staging) and Production (production). Step 4 is not yet configured. See [MVP acceptance](MVP.md). 5. Verify signed reads on a Preview deployment before Production. Until steps 1–3 are done, live mode shows _unavailable_ (403), never sample data.
 
 ## Backend dependency
 

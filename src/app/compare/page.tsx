@@ -18,16 +18,21 @@ function optionLabel(measurement: PublicMeasurement) {
   return `${measurement.name} · ${parameterLabel(measurement.parameter)} (${measurement.unit})`;
 }
 
+const ERROR_ID = "compare-error";
+
 function MeasurementSelect({
   name,
   label,
   options,
   value,
+  invalid,
 }: {
   name: "a" | "b";
   label: string;
   options: readonly PublicMeasurement[];
   value: string | null;
+  /** Points the select at the error message when its choice couldn't be used. */
+  invalid: boolean;
 }) {
   const id = `compare-${name}`;
   return (
@@ -39,6 +44,8 @@ function MeasurementSelect({
         id={id}
         name={name}
         defaultValue={value ?? ""}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? ERROR_ID : undefined}
         className="mt-1.5 block h-11 w-full rounded-md border border-line-input bg-surface px-3 text-base focus-visible:border-accent"
       >
         <option value="">Choose a measurement</option>
@@ -85,8 +92,10 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
   const a = find(query.a);
   const b = find(query.b);
   // An unknown, restricted or uncomparable ID is treated as not chosen, without saying which it was.
-  const unknown = (query.a !== null && !a) || (query.b !== null && !b);
+  const invalidA = query.a !== null && !a;
   const same = a !== null && b !== null && a.measurementId === b.measurementId;
+  const invalidB = (query.b !== null && !b) || same;
+  const unknown = invalidA || (query.b !== null && !b);
   const ready = a !== null && b !== null && !same;
   const range: HistoryRange = query.range;
   const example = suggestion(options);
@@ -114,12 +123,14 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
               label="First measurement"
               options={options}
               value={a?.measurementId ?? null}
+              invalid={invalidA}
             />
             <MeasurementSelect
               name="b"
               label="Second measurement"
               options={options}
               value={same ? null : (b?.measurementId ?? null)}
+              invalid={invalidB}
             />
             <input type="hidden" name="range" value={range} />
             <button
@@ -131,7 +142,7 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
           </form>
 
           {unknown || same ? (
-            <p role="alert" className="mt-4 text-sm font-medium text-danger">
+            <p id={ERROR_ID} role="alert" className="mt-4 text-sm font-medium text-danger">
               {same
                 ? "Choose two different measurements."
                 : "One of those measurements isn’t available to compare. Choose another."}

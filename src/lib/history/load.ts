@@ -1,5 +1,5 @@
 import "server-only";
-import type { RdpClient } from "@/lib/rdp/client";
+import { CACHE_TTL_MS, type RdpClient } from "@/lib/rdp/client";
 import { tickKey, type Coverage, type InstantHistoryPage } from "@/lib/rdp/contract";
 import { RdpError } from "@/lib/rdp/errors";
 import { toPublicHistory } from "@/lib/rdp/public";
@@ -105,11 +105,48 @@ async function readAllPages(
   };
 }
 
+type Entry = { expires: number; result: Promise<HistoryResult> };
+/**
+ * Whole assembled windows, per client: the client caches only first pages, so without this every 30-day view would
+ * re-read its continuation pages from the shared RDP throttle. Loads in flight are shared; only `ok` results are
+ * kept, so a failure is never served from cache (the next view reads again).
+ */
+const assembled = new WeakMap<RdpClient, Map<string, Entry>>();
+const MAX_ENTRIES = 200;
+
 /**
  * Reads one window of an instantaneous measurement completely, following RDP's continuation cursor with the
  * identical window. The result is all or nothing: a failed page never yields a shorter history presented as whole.
+ * Identical windows read within {@link CACHE_TTL_MS.history} share one result.
  */
-export async function loadHistory(
+export function loadHistory(
+  rdp: RdpClient,
+  id: string,
+  kind: "instantaneous" | "period_total",
+  window: HistoryWindow,
+): Promise<HistoryResult> {
+  if (kind === "period_total") return Promise.resolve({ status: "deferred" });
+  let cache = assembled.get(rdp);
+  if (!cache) assembled.set(rdp, (cache = new Map()));
+  const key = `${id}|${window.from}|${window.to}`;
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && hit.expires > now) return hit.result;
+  if (hit) cache.delete(key);
+  if (cache.size >= MAX_ENTRIES) {
+    for (const [name, entry] of cache) if (entry.expires <= now) cache.delete(name);
+    if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value!);
+  }
+  const result = readHistory(rdp, id, kind, window);
+  const entry = { expires: now + CACHE_TTL_MS.history, result };
+  cache.set(key, entry);
+  void result.then((value) => {
+    if (value.status !== "ok" && cache.get(key) === entry) cache.delete(key);
+  });
+  return result;
+}
+
+async function readHistory(
   rdp: RdpClient,
   id: string,
   kind: "instantaneous" | "period_total",

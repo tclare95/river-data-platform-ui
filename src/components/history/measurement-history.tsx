@@ -46,7 +46,7 @@ export function RangeNav({
               scroll={false}
               aria-current={key === range ? "page" : undefined}
               className={cx(
-                "inline-flex min-h-9 items-center rounded px-3 text-sm font-medium",
+                "inline-flex min-h-10 items-center rounded px-3 text-sm font-medium",
                 key === range ? "bg-accent text-surface" : "text-accent hover:bg-canvas",
               )}
             >
@@ -67,7 +67,7 @@ export function CoverageNote({ coverage }: { coverage: Coverage }) {
       {coverage.status === "complete" ? (
         <p>Coverage verified complete for this period.</p>
       ) : coverage.status === "unknown" ? (
-        <p>RDP hasn’t verified that this record is complete.</p>
+        <p>This record hasn’t been verified as complete.</p>
       ) : (
         <p>Part of this period has no data.</p>
       )}
@@ -159,7 +159,7 @@ function HistoryBody({
         </p>
       </div>
       <details className="group">
-        <summary className="cursor-pointer font-medium text-accent">
+        <summary className="cursor-pointer py-2 font-medium text-accent">
           Readings table ({result.observations.length.toLocaleString("en-GB")})
         </summary>
         <div className="mt-3">
