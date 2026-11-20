@@ -25,14 +25,14 @@ function measure(overrides: Partial<PublicMeasurement>): PublicMeasurement {
 }
 
 describe("comparison query", () => {
-  it("reads single values and defaults the range", () => {
+  it("reads single values, flags repeated ones and defaults the range", () => {
     expect(readCompareQuery({ a: "ea-a", b: "ea-b", range: "30d" })).toEqual({
       a: "ea-a",
       b: "ea-b",
       range: "30d",
     });
     expect(readCompareQuery({ a: ["ea-a", "ea-c"], b: "", range: "1y" })).toEqual({
-      a: null,
+      a: "ea-a,ea-c",
       b: null,
       range: "7d",
     });

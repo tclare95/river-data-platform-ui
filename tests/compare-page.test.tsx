@@ -182,8 +182,13 @@ describe("compare page", () => {
   });
 
   it("treats unknown and rainfall IDs alike, without revealing which", async () => {
-    for (const b of ["ea-unknown-level", "ea-stone-rainfall", "../secret"]) {
-      await renderCompare({ a: "ea-shardlow-level", b });
+    for (const b of [
+      "ea-unknown-level",
+      "ea-stone-rainfall",
+      "../secret",
+      ["ea-shardlow-flow", "ea-colwick-level"],
+    ]) {
+      await renderCompare({ a: "ea-shardlow-level", b } as Record<string, string>);
       expect(screen.getByRole("alert")).toHaveTextContent(
         "One of those measurements isn’t available to compare.",
       );

@@ -9,10 +9,12 @@ import type { PublicMeasurement } from "@/lib/rdp/public";
 export type CompareQuery = { a: string | null; b: string | null; range: HistoryRange };
 
 function single(value: unknown): string | null {
+  // A repeated parameter is a choice that can't be used: a joined value never matches a measurement ID.
+  if (Array.isArray(value)) return value.join(",");
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-/** `?a=&b=&range=`; a missing or repeated parameter is not chosen. */
+/** `?a=&b=&range=`; a missing parameter is not chosen, a repeated one is an unusable choice. */
 export function readCompareQuery(
   params: Record<string, string | string[] | undefined>,
 ): CompareQuery {
