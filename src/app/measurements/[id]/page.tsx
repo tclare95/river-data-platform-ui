@@ -248,11 +248,11 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
         <MeasurementHistory measurement={measurement} range={range} />
         <p className="mt-4">
           <Link
-            href={compareHref({
-              a: measurement.measurementId,
-              b: related[0]?.measurementId,
+            href={compareHref(
+              [measurement, ...related.slice(0, 1)].map(({ measurementId }) => measurementId),
               range,
-            })}
+            )}
+            prefetch={false}
             className="link text-sm"
           >
             Compare with another measurement

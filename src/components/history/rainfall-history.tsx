@@ -31,11 +31,15 @@ export function RainfallBars({
   intervals,
   yAxisId,
   color = "var(--color-accent)",
+  fill = color,
+  dash,
   opacity = 1,
 }: {
   intervals: History["intervals"];
   yAxisId?: number;
   color?: string;
+  fill?: string;
+  dash?: string;
   opacity?: number;
 }) {
   const x = useXAxisScale();
@@ -79,10 +83,11 @@ export function RainfallBars({
           y={top}
           width={right - left}
           height={baseline - top}
-          fill={color}
+          fill={fill}
           fillOpacity={opacity}
           stroke={color}
           strokeWidth={0.5}
+          strokeDasharray={dash}
         >
           {title}
         </rect>
@@ -97,7 +102,7 @@ export function RainfallBars({
         y2={baseline}
         stroke={period || yAxisId !== undefined ? color : "var(--color-ink-muted)"}
         strokeWidth={period ? 2 : 1.5}
-        strokeDasharray={!period ? "2 2" : undefined}
+        strokeDasharray={!period ? "2 2" : dash}
       >
         {title}
       </line>

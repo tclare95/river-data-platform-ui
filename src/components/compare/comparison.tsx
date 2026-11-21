@@ -6,8 +6,7 @@ import { CoverageNote, RangeNav } from "@/components/history/measurement-history
 import { Time } from "@/components/latest-reading";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { alignReadings, compareHref, comparisonReadings, type ComparisonSide } from "@/lib/compare";
-import { loadComparisonPair } from "@/lib/compare-load";
-import type { HistoryResult } from "@/lib/history/load";
+import { loadComparison } from "@/lib/compare-load";
 import { HISTORY_RANGES, type HistoryRange } from "@/lib/history/range";
 import { missingLabels, rainfallBounds } from "@/lib/history/rainfall";
 import { parameterLabel } from "@/lib/labels";
@@ -59,17 +58,11 @@ function SeriesStatus({ side, span }: { side: ComparisonSide; span: string }) {
   ) : null;
 }
 
-function ComparisonBody({
-  sides,
-  range,
-}: {
-  sides: [ComparisonSide, ComparisonSide];
-  range: HistoryRange;
-}) {
-  const [a, b] = sides;
+function ComparisonBody({ sides, range }: { sides: ComparisonSide[]; range: HistoryRange }) {
   const span = HISTORY_RANGES[range].label;
-  const rows = alignReadings(comparisonReadings(a.result), comparisonReadings(b.result));
+  const rows = alignReadings(sides.map(({ result }) => comparisonReadings(result)));
   const columns = sides.map(({ measurement }) => ({
+    id: measurement.measurementId,
     label: title(measurement),
     unit: measurement.unit,
     rainfall: measurement.kind === "period_total",
@@ -77,7 +70,7 @@ function ComparisonBody({
 
   return (
     <div className="space-y-4">
-      <Announce targetId={STATUS_ID} text={`Showing ${span} for both measurements`} />
+      <Announce targetId={STATUS_ID} text={`Showing ${span} for ${sides.length} measurements`} />
       {rows.length > 0 ? <ComparisonChart sides={sides} rows={rows} /> : null}
       {sides.map((side) => (
         <SeriesStatus key={side.measurement.measurementId} side={side} span={span} />
@@ -89,7 +82,7 @@ function ComparisonBody({
               Compared readings table ({rows.length.toLocaleString("en-GB")} times)
             </summary>
             <div className="mt-3">
-              <ComparisonTable rows={rows} a={columns[0]} b={columns[1]} />
+              <ComparisonTable rows={rows} columns={columns} />
             </div>
           </details>
           <details>
@@ -117,59 +110,44 @@ function ComparisonBody({
 }
 
 function LoadedComparison({
-  measurements,
   range,
   results,
 }: {
-  measurements: [PublicMeasurement, PublicMeasurement];
   range: HistoryRange;
-  results: Promise<[HistoryResult, HistoryResult]>;
+  results: Promise<ComparisonSide[]>;
 }) {
-  const [ra, rb] = use(results);
-  return (
-    <ComparisonBody
-      range={range}
-      sides={[
-        { measurement: measurements[0], result: ra },
-        { measurement: measurements[1], result: rb },
-      ]}
-    />
-  );
+  return <ComparisonBody range={range} sides={use(results)} />;
 }
 
 export function Comparison({
-  a,
-  b,
+  measurements,
   range,
 }: {
-  a: PublicMeasurement;
-  b: PublicMeasurement;
+  measurements: PublicMeasurement[];
   range: HistoryRange;
 }) {
-  const results = loadComparisonPair(a, b, range);
+  const results = loadComparison(measurements, range);
+  const ids = measurements.map(({ measurementId }) => measurementId);
   return (
     <section aria-labelledby="comparison" className="mt-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="comparison" className="text-lg font-semibold tracking-tight">
           History
         </h2>
-        <RangeNav
-          range={range}
-          hrefFor={(key) => compareHref({ a: a.measurementId, b: b.measurementId, range: key })}
-        />
+        <RangeNav range={range} hrefFor={(key) => compareHref(ids, key)} prefetch={false} />
       </div>
       <p id={STATUS_ID} role="status" className="sr-only" />
       <div className="mt-4">
         <Suspense
-          key={`${a.measurementId}|${b.measurementId}|${range}`}
+          key={compareHref(ids, range)}
           fallback={
             <LoadingState
-              label={`Loading ${HISTORY_RANGES[range].label} for both measurements`}
+              label={`Loading ${HISTORY_RANGES[range].label} for ${ids.length} measurements`}
               lines={8}
             />
           }
         >
-          <LoadedComparison measurements={[a, b]} range={range} results={results} />
+          <LoadedComparison range={range} results={results} />
         </Suspense>
       </div>
     </section>

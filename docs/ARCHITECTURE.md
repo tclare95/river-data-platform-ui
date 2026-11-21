@@ -65,12 +65,12 @@ Recharts draws the history chart. MapLibre GL JS loads in the browser when a vis
 
 ## Comparison
 
-`/compare?a=&b=&range=` compares two published measurements. The plain GET selector and 7-/30-day ranges work without JavaScript.
+`/compare?a=&b=&c=&d=&range=` compares two to four published measurements in selection order. Existing two-slot URLs still work. A single GET picker adds one measurement at a time and removal links preserve the range.
 
-- **Time** — One Recharts canvas over the same bounded history query for both series. Level and flow use their observed timestamps and the detail view’s line-break rules. Rainfall bars use verified start/end bounds, including a boundary that straddles the label query window. Unverified timing is marked at the provider label. Ineligible intervals get a cross, reported zero gets a baseline mark, and absent intervals leave gaps.
-- **Scales** — The legend names each series, its unit or rainfall period, and its axis. Compatible magnitudes can share a scale. Different parameters, units, rainfall periods or incompatible level datums use independent axes. Station-local levels from different stations and levels on unknown datums each keep their own scale.
+- **Time** — One Recharts canvas over the same bounded history query for every series. Level and flow use their observed timestamps and the detail view’s line-break rules. Rainfall bars use verified start/end bounds, including a boundary that straddles the label query window. Unverified timing is marked at the provider label. Ineligible intervals get a cross, reported zero gets a baseline mark, and absent intervals leave gaps.
+- **Scales** — The legend names each series, its unit or rainfall period, and its axis. Compatible magnitudes can share a scale. Different parameters, units, rainfall periods or incompatible level datums use independent axes. Station-local levels from different stations and levels on unknown datums each keep their own scale. The picker disables additions that would require a third raw-value axis, and incompatible URLs show an explanation before any history read.
 - **Accessible data** — The disclosure table lists the union of exact observation times and rainfall labels, newest first, with original values, rainfall timing and eligibility, and any corrected revisions. The chart cursor uses those same source rows.
-- **Availability** — Each series uses the existing independent, all-or-nothing history loader. A failed or empty series has its own state and the available series stays visible. The same history cache and response bounds apply.
+- **Availability and upstream cost** — Each series uses the existing independent, all-or-nothing history loader. A failed or empty series has its own state and the available series stay visible. Each view starts at most four history loads using the same cache, limits on pagination and restarts, and deadlines as detail history. Comparison selection and range links avoid speculative history loads.
 
 ## Discovery and detail pages
 

@@ -6,9 +6,14 @@ import { PageMain } from "@/components/container";
 import { PageHeader } from "@/components/page-header";
 import { Attribution, FixtureNote } from "@/components/provenance";
 import { EmptyState, ErrorState } from "@/components/states";
-import { compareHref, readCompareQuery } from "@/lib/compare";
+import {
+  COMPARE_SLOTS,
+  MAX_COMPARE_AXES,
+  compareHref,
+  comparisonAxes,
+  readCompareQuery,
+} from "@/lib/compare";
 import { loadComparable } from "@/lib/compare-load";
-import type { HistoryRange } from "@/lib/history/range";
 import { parameterLabel } from "@/lib/labels";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
@@ -19,45 +24,6 @@ function optionLabel(measurement: PublicMeasurement) {
 }
 
 const ERROR_ID = "compare-error";
-
-function MeasurementSelect({
-  name,
-  label,
-  options,
-  value,
-  invalid,
-}: {
-  name: "a" | "b";
-  label: string;
-  options: readonly PublicMeasurement[];
-  value: string | null;
-  /** Points the select at the error message when its choice couldn't be used. */
-  invalid: boolean;
-}) {
-  const id = `compare-${name}`;
-  return (
-    <div className="min-w-0">
-      <label htmlFor={id} className="block text-sm font-medium">
-        {label}
-      </label>
-      <select
-        id={id}
-        name={name}
-        defaultValue={value ?? ""}
-        aria-invalid={invalid || undefined}
-        aria-describedby={invalid ? ERROR_ID : undefined}
-        className="mt-1.5 block h-11 w-full rounded-md border border-line-input bg-surface px-3 text-base focus-visible:border-accent"
-      >
-        <option value="">Choose a measurement</option>
-        {options.map((measurement) => (
-          <option key={measurement.measurementId} value={measurement.measurementId}>
-            {optionLabel(measurement)}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
 
 /** A first pair to try: two measurements at one station, else the first two listed. */
 function suggestion(options: readonly PublicMeasurement[]) {
@@ -88,16 +54,33 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
   }
 
   const options = catalogue.measurements;
-  const find = (id: string | null) => options.find((item) => item.measurementId === id) ?? null;
-  const a = find(query.a);
-  const b = find(query.b);
-  // An unknown or restricted ID is treated as not chosen, without saying which it was.
-  const invalidA = query.a !== null && !a;
-  const same = a !== null && b !== null && a.measurementId === b.measurementId;
-  const invalidB = (query.b !== null && !b) || same;
-  const unknown = invalidA || (query.b !== null && !b);
-  const ready = a !== null && b !== null && !same;
-  const range: HistoryRange = query.range;
+  const uniqueIds = new Set(query.ids);
+  const selected = [...uniqueIds].flatMap((id) => {
+    const measurement = options.find((item) => item.measurementId === id);
+    return measurement ? [measurement] : [];
+  });
+  const ids = selected.map(({ measurementId }) => measurementId);
+  const { range } = query;
+  const tooManyAxes = (measurements: PublicMeasurement[]) =>
+    comparisonAxes(measurements, (item) => item).length > MAX_COMPARE_AXES;
+  const error =
+    query.repeated || selected.length < uniqueIds.size
+      ? "One of those measurements isn’t available to compare. Choose another."
+      : selected.length < query.ids.length
+        ? "Choose different measurements."
+        : tooManyAxes(selected)
+          ? "These measurements need more than two separate axes because of their types, units, level datums or rainfall periods. Remove a measurement to compare them."
+          : null;
+  const ready = selected.length >= 2 && !error;
+  const candidates = options
+    .filter(({ measurementId }) => !ids.includes(measurementId))
+    .map((measurement) => ({
+      measurement,
+      incompatible: tooManyAxes([...selected, measurement]),
+    }));
+  const hasIncompatible = candidates.some(({ incompatible }) => incompatible);
+  const canAdd = candidates.some(({ incompatible }) => !incompatible);
+
   const example = suggestion(options);
 
   return (
@@ -109,51 +92,100 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
         <EmptyState title="Not enough measurements to compare yet" className="mt-8" />
       ) : (
         <>
-          <form
-            action="/compare"
-            method="get"
-            aria-label="Choose measurements"
-            className="mt-8 grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end"
-          >
-            <MeasurementSelect
-              name="a"
-              label="First measurement"
-              options={options}
-              value={a?.measurementId ?? null}
-              invalid={invalidA}
-            />
-            <MeasurementSelect
-              name="b"
-              label="Second measurement"
-              options={options}
-              value={same ? null : (b?.measurementId ?? null)}
-              invalid={invalidB}
-            />
-            <input type="hidden" name="range" value={range} />
-            <button
-              type="submit"
-              className="inline-flex h-11 items-center justify-center rounded-md bg-accent px-5 text-sm font-semibold text-surface transition-colors hover:bg-accent-strong"
-            >
-              Compare
-            </button>
-          </form>
+          {selected.length ? (
+            <ul aria-label="Selected measurements" className="mt-6 flex flex-wrap gap-2">
+              {selected.map((measurement, index) => (
+                <li
+                  key={measurement.measurementId}
+                  className="flex items-center gap-2 rounded-md border border-line bg-surface px-3 text-sm"
+                >
+                  {optionLabel(measurement)}
+                  <Link
+                    href={compareHref(
+                      ids.filter((_, i) => i !== index),
+                      range,
+                    )}
+                    prefetch={false}
+                    aria-label={`Remove ${optionLabel(measurement)}`}
+                    className="link inline-flex min-h-11 items-center"
+                  >
+                    Remove
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : null}
 
-          {unknown || same ? (
+          {error ? (
             <p id={ERROR_ID} role="alert" className="mt-4 text-sm font-medium text-danger">
-              {same
-                ? "Choose two different measurements."
-                : "One of those measurements isn’t available to compare. Choose another."}
+              {error}
             </p>
           ) : null}
 
+          {selected.length < COMPARE_SLOTS.length && candidates.length ? (
+            <form action="/compare" method="get" aria-label="Choose measurements" className="mt-4">
+              {ids.map((id, index) => (
+                <input key={id} type="hidden" name={COMPARE_SLOTS[index]} value={id} />
+              ))}
+              <label htmlFor="compare-add" className="block text-sm font-medium">
+                {selected.length ? "Add a measurement" : "Choose a measurement"}
+              </label>
+              <div className="mt-1.5 flex max-w-copy gap-2">
+                <select
+                  id="compare-add"
+                  name={COMPARE_SLOTS[selected.length]}
+                  defaultValue=""
+                  required
+                  aria-describedby={
+                    [error && ERROR_ID, hasIncompatible && "compare-scales"]
+                      .filter(Boolean)
+                      .join(" ") || undefined
+                  }
+                  className="h-11 min-w-0 flex-1 rounded-md border border-line-input bg-surface px-2 text-base"
+                >
+                  <option value="" disabled>
+                    Choose a measurement
+                  </option>
+                  {candidates.map(({ measurement, incompatible }) => (
+                    <option
+                      key={measurement.measurementId}
+                      value={measurement.measurementId}
+                      disabled={incompatible}
+                    >
+                      {optionLabel(measurement)}
+                      {incompatible ? " · Needs a third axis" : ""}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="submit"
+                  disabled={!canAdd}
+                  className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-surface hover:bg-accent-strong disabled:opacity-50"
+                >
+                  Add
+                </button>
+              </div>
+              <input type="hidden" name="range" value={range} />
+              {hasIncompatible ? (
+                <p id="compare-scales" className="mt-2 text-sm text-ink-muted">
+                  The chart supports two axes. Measurements that need a third have a different type,
+                  unit, level datum or rainfall period.
+                </p>
+              ) : null}
+            </form>
+          ) : selected.length === COMPARE_SLOTS.length ? (
+            <p className="mt-3 text-sm text-ink-muted">Four measurements selected.</p>
+          ) : null}
+
           {ready ? (
-            <Comparison a={a} b={b} range={range} />
-          ) : example && !unknown && !same ? (
+            <Comparison measurements={selected} range={range} />
+          ) : example && !error && selected.length === 0 ? (
             <p className="mt-6 text-sm text-ink-muted">
               For example,{" "}
               <Link
                 className="link"
-                href={compareHref({ a: example[0].measurementId, b: example[1].measurementId })}
+                href={compareHref(example.map(({ measurementId }) => measurementId))}
+                prefetch={false}
               >
                 {example[0].stationId === example[1].stationId
                   ? `${example[0].name} ${parameterLabel(example[0].parameter).toLowerCase()} and ${parameterLabel(example[1].parameter).toLowerCase()}`
@@ -165,7 +197,7 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
         </>
       )}
 
-      <Attribution measurements={ready ? [a, b] : options} />
+      <Attribution measurements={ready ? selected : options} />
     </PageMain>
   );
 }
