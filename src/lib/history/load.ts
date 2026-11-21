@@ -15,6 +15,7 @@ export const HISTORY_PAGE_LIMIT = 2000;
  * reported as too large rather than cut short.
  */
 export const HISTORY_MAX_PAGES = 4;
+const HISTORY_DEADLINE_MS = 20_000;
 /** A continuation that expires or goes stale restarts from the first page this many times. */
 const MAX_RESTARTS = 1;
 
@@ -53,6 +54,7 @@ async function readAllPages(
   id: string,
   kind: HistoryPage["kind"],
   window: HistoryWindow,
+  signal: AbortSignal,
 ): Promise<HistoryResult> {
   const pages: HistoryPage[] = [];
   let cursor: string | undefined;
@@ -71,6 +73,7 @@ async function readAllPages(
       }
       throw error;
     }
+    if (signal.aborted) return { status: "unavailable" };
     if (page.kind !== kind) {
       if (kind === "instantaneous" && pages.length === 0) return { status: "deferred" };
       throw new RdpError("RESPONSE_CONTRACT_ERROR");
@@ -164,7 +167,19 @@ export function loadHistory(
     for (const [name, entry] of cache) if (entry.expires <= now) cache.delete(name);
     if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value!);
   }
-  const result = readHistory(rdp, id, kind, window);
+  const deadline = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // A page read can be shared with another caller. Bound this load's wait and stop pagination when it expires.
+  const expired = new Promise<HistoryResult>((resolve) => {
+    timer = setTimeout(() => {
+      deadline.abort();
+      resolve({ status: "unavailable" });
+    }, HISTORY_DEADLINE_MS);
+  });
+  const result = Promise.race([
+    readHistory(rdp, id, kind, window, deadline.signal),
+    expired,
+  ]).finally(() => clearTimeout(timer));
   const entry = { expires: now + CACHE_TTL_MS.history, result };
   cache.set(key, entry);
   void result.then((value) => {
@@ -178,12 +193,13 @@ async function readHistory(
   id: string,
   kind: HistoryPage["kind"],
   window: HistoryWindow,
+  signal: AbortSignal,
 ): Promise<HistoryResult> {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await readAllPages(rdp, id, kind, window);
+      return await readAllPages(rdp, id, kind, window, signal);
     } catch (error) {
-      if (error instanceof Restart && attempt < MAX_RESTARTS) continue;
+      if (error instanceof Restart && attempt < MAX_RESTARTS && !signal.aborted) continue;
       return { status: "unavailable" };
     }
   }

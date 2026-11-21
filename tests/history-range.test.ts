@@ -27,20 +27,19 @@ describe("parseRange", () => {
 });
 
 describe("rangeWindow", () => {
-  it("ends at the next whole UTC hour", () => {
+  it("ends at the latest whole UTC hour", () => {
     expect(rangeWindow("7d", Date.parse("2026-11-19T12:07:42.123Z"))).toEqual({
-      from: "2026-11-12T13:00:00.000Z",
-      to: "2026-11-19T13:00:00.000Z",
+      from: "2026-11-12T12:00:00.000Z",
+      to: "2026-11-19T12:00:00.000Z",
     });
   });
 
-  it("ends at now when now is exactly on the hour", () => {
-    expect(rangeWindow("7d", Date.parse("2026-11-19T12:00:00.000Z")).to).toBe(
-      "2026-11-19T12:00:00.000Z",
-    );
-    expect(rangeWindow("7d", Date.parse("2026-11-19T12:00:00.001Z")).to).toBe(
-      "2026-11-19T13:00:00.000Z",
-    );
+  it.each([
+    ["2026-11-19T11:59:59.999Z", "2026-11-19T11:00:00.000Z"],
+    ["2026-11-19T12:00:00.000Z", "2026-11-19T12:00:00.000Z"],
+    ["2026-11-19T12:00:00.001Z", "2026-11-19T12:00:00.000Z"],
+  ])("ends the window for %s at %s", (now, end) => {
+    expect(rangeWindow("7d", Date.parse(now)).to).toBe(end);
   });
 
   it("gives every load within one hour the same window", () => {
@@ -66,8 +65,8 @@ describe("rangeWindow", () => {
 
   it("crosses a month boundary for 30 days", () => {
     expect(rangeWindow("30d", Date.parse("2026-11-19T12:07:00Z"))).toEqual({
-      from: "2026-10-20T13:00:00.000Z",
-      to: "2026-11-19T13:00:00.000Z",
+      from: "2026-10-20T12:00:00.000Z",
+      to: "2026-11-19T12:00:00.000Z",
     });
   });
 });

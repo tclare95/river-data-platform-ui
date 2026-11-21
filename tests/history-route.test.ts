@@ -110,6 +110,7 @@ describe("GET /api/measurements/{id}/history", () => {
 
   it.each([
     ["CURSOR_EXPIRED", 409, "RESTART_REQUIRED"],
+    ["TIMEOUT", 503, "UNAVAILABLE"],
     ["AUTHORIZATION_FAILED", 503, "UNAVAILABLE"],
     ["CONFIGURATION_ERROR", 503, "UNAVAILABLE"],
     ["ARCHIVE_INTEGRITY", 503, "UNAVAILABLE"],

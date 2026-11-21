@@ -1,5 +1,5 @@
 /**
- * History ranges offered on the detail page. Windows end at the next whole UTC hour so every load within an hour
+ * History ranges offered on the detail page. Windows end at the latest whole UTC hour so every load within an hour
  * asks RDP the same question (one cached first page, few distinct upstream queries). `from` is inclusive and `to`
  * exclusive, exactly as RDP reads them.
  */
@@ -24,7 +24,7 @@ export function parseRange(value: unknown): HistoryRange {
 }
 
 export function rangeWindow(range: HistoryRange, now: number): HistoryWindow {
-  const end = Math.ceil(now / HOUR) * HOUR;
+  const end = Math.floor(now / HOUR) * HOUR;
   return {
     from: new Date(end - HISTORY_RANGES[range].days * DAY).toISOString(),
     to: new Date(end).toISOString(),
