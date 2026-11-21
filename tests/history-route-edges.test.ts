@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { rangeWindow } from "@/lib/history/range";
 import { createRdpClient, type HistoryQuery, type RdpClient } from "@/lib/rdp/client";
 import { createFixtureTransport } from "@/lib/rdp/fixture";
 
@@ -46,22 +47,33 @@ afterEach(() => {
 });
 
 describe("history route edges", () => {
-  it("defaults to a 7-day window ending on the next whole hour", async () => {
+  it("defaults to the detail page's 7-day window ending on the latest whole hour", async () => {
     const response = await call("ea-colwick-level");
     expect(response.status).toBe(200);
     expect(historyCalls).toHaveLength(1);
     const { from, to, limit } = historyCalls[0];
-    expect(to).toBe("2026-11-19T13:00:00.000Z");
+    expect({ from, to }).toEqual(rangeWindow("7d", NOW));
+    expect(to).toBe("2026-11-19T12:00:00.000Z");
     expect(Date.parse(to) - Date.parse(from)).toBe(7 * DAY);
     expect(Date.parse(from) % HOUR).toBe(0);
     expect(limit).toBe(HISTORY_BOUNDS.pageLimit);
   });
 
-  it("gives repeated default loads within one hour the same upstream window", async () => {
+  it("accepts an explicit endpoint exactly at now", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-19T12:00:00Z"));
+    const response = await call("ea-colwick-level", "?from=2026-11-12T12:00Z&to=2026-11-19T12:00Z");
+    expect(response.status).toBe(200);
+    expect(historyCalls[0].to).toBe("2026-11-19T12:00:00.000Z");
+  });
+
+  it("keeps the default window stable until it advances at the hour boundary", async () => {
     await call("ea-colwick-level");
     vi.spyOn(Date, "now").mockReturnValue(NOW + 40 * 60_000);
     await call("ea-colwick-level");
     expect(historyCalls[1]).toEqual(historyCalls[0]);
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-19T13:00:00Z"));
+    await call("ea-colwick-level");
+    expect(historyCalls[2].to).toBe("2026-11-19T13:00:00.000Z");
   });
 
   it("accepts exactly 31 days and rejects 31 days plus one hour", async () => {
@@ -74,6 +86,7 @@ describe("history route edges", () => {
   });
 
   it.each([
+    ["a future end", "?from=2026-11-12T13:00Z&to=2026-11-19T13:00Z"],
     ["equal bounds", "?from=2026-11-19T00:00Z&to=2026-11-19T00:00Z"],
     ["a reversed window", "?from=2026-11-19T00:00Z&to=2026-11-18T00:00Z"],
     ["a non-hour bound", "?from=2026-11-18T00:30Z&to=2026-11-19T00:00Z"],

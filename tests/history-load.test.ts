@@ -16,7 +16,7 @@ const DAY = 24 * 60 * MINUTE;
 const ID = "ea-colwick-level";
 const RAIN_ID = "ea-stone-rainfall";
 /** The detail page's 30-day window at NOW: [from, to) on whole UTC hours. */
-const WINDOW = { from: "2026-10-20T13:00:00.000Z", to: "2026-11-19T13:00:00.000Z" };
+const WINDOW = rangeWindow("30d", NOW);
 const FROM_MS = Date.parse(WINDOW.from);
 const TO_MS = Date.parse(WINDOW.to);
 
@@ -198,6 +198,53 @@ describe("loadHistory: continuation", () => {
   });
 });
 
+describe("loadHistory: deadline", () => {
+  it("returns unavailable after 20 seconds even when the first page never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const { load, requests } = setup(() => new Promise(() => {}));
+      const result = load();
+      const settled = vi.fn();
+      void result.then(settled);
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(requests).toHaveLength(1);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(result).resolves.toEqual({ status: "unavailable" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shares the deadline across pages and a cursor restart and discards a late page", async () => {
+    vi.useFakeTimers();
+    try {
+      const pages = paged(regular(3), {
+        pageSize: 1,
+        rejectCursor: (gen) => (gen === 1 ? new RdpError("CURSOR_STALE", 409) : undefined),
+      });
+      const { load, requests } = setup((query, call) => {
+        const page = pages(query, call);
+        if (call === 1 || call === 4) {
+          return new Promise((resolve) => setTimeout(() => resolve(page), 15_000));
+        }
+        return page;
+      });
+      const result = load();
+      await vi.advanceTimersByTimeAsync(20_000);
+      await expect(result).resolves.toEqual({ status: "unavailable" });
+      const expected = [undefined, "g1o1", undefined, "g2o1"];
+      expect(requests.map(({ cursor }) => cursor)).toEqual(expected);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(requests.map(({ cursor }) => cursor)).toEqual(expected);
+      await expect(load()).resolves.toMatchObject({ status: "ok", pages: 3 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("loadHistory: failed continuation pages", () => {
   it("returns unavailable when page 2 still fails with 503 after the transport's single retry", async () => {
     const attempt = vi.fn(
@@ -220,6 +267,8 @@ describe("loadHistory: failed continuation pages", () => {
     expect(attempt).toHaveBeenCalledTimes(2);
     // No restart: only cursor errors restart.
     expect(requests).toHaveLength(2);
+    await expect(load()).resolves.toMatchObject({ status: "ok", pages: 2 });
+    expect(requests).toHaveLength(3);
   });
 
   it.each([
