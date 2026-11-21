@@ -39,16 +39,6 @@ export type HistoryChartProps = {
   knownGaps: ReadonlyArray<{ from: string; to: string; reason: KnownGapReason }>;
   unit: string;
   parameterLabel: string;
-  /** Charts with the same id move their hover cursor together, matched by time (comparison). */
-  syncId?: string;
-  /** Value range to scale against instead of this series' own (a shared scale across compared charts). */
-  valueRange?: readonly [number, number];
-  /** Fixed y-axis width, so stacked charts' time axes line up exactly. */
-  yAxisWidth?: number;
-  /** Show the "parameter (unit)" caption above the plot; off where the surrounding panel already says it. */
-  caption?: boolean;
-  /** Where the readings are listed, for the accessible summary. */
-  tableHint?: string;
 };
 
 const DAY_MS = 86_400_000;
@@ -166,7 +156,7 @@ function summarise(props: HistoryChartProps, series: Series) {
     );
     parts.push(`Shaded ${plural(props.knownGaps.length, "known gap")}: ${gaps.join("; ")}.`);
   }
-  parts.push(props.tableHint ?? "Every reading is in the Readings table below.");
+  parts.push("Every reading is in the Readings table below.");
   return parts.join(" ");
 }
 
@@ -179,7 +169,7 @@ export function describeChart(props: HistoryChartProps): string {
 }
 
 /** A visible marker only for a reading with no joined neighbour; a line segment alone would hide it. */
-function IsolatedDot({ cx, cy, payload, index }: DotItemDotProps) {
+export function IsolatedDot({ cx, cy, payload, index, stroke }: DotItemDotProps) {
   const point = payload as SeriesPoint;
   if (!point.isolated || cx === undefined || cy === undefined) return <g key={index} />;
   return (
@@ -188,7 +178,7 @@ function IsolatedDot({ cx, cy, payload, index }: DotItemDotProps) {
       cx={cx}
       cy={cy}
       r={4}
-      fill="var(--color-accent)"
+      fill={stroke}
       stroke="var(--color-surface)"
       strokeWidth={2}
     />
@@ -213,14 +203,11 @@ function ReadingTooltip({
 
 export function HistoryChart(props: HistoryChartProps): JSX.Element {
   const { readings, from, to, expectedIntervalSeconds, knownGaps, unit, parameterLabel } = props;
-  const { syncId, valueRange, yAxisWidth } = props;
   const series = buildSeries(readings, expectedIntervalSeconds, knownGaps);
   const fromMs = epochMs(from);
   const toMs = epochMs(to);
   const x = timeTicks(fromMs, toMs);
-  const y = valueRange
-    ? valueAxis(valueRange[0], valueRange[1])
-    : valueAxis(series.min ?? 0, series.max ?? 0);
+  const y = valueAxis(series.min ?? 0, series.max ?? 0);
   // Shade only the part of each gap inside the window.
   const shaded = knownGaps
     .map((gap) => [Math.max(epochMs(gap.from), fromMs), Math.min(epochMs(gap.to), toMs)] as const)
@@ -228,11 +215,9 @@ export function HistoryChart(props: HistoryChartProps): JSX.Element {
 
   return (
     <figure className="m-0">
-      {props.caption === false ? null : (
-        <figcaption className="mb-2 text-xs text-ink-muted">
-          {parameterLabel} ({unit})
-        </figcaption>
-      )}
+      <figcaption className="mb-2 text-xs text-ink-muted">
+        {parameterLabel} ({unit})
+      </figcaption>
       {/* Fixed height reserved before Recharts measures on the client, so hydration causes no layout shift. */}
       <div role="img" aria-label={summarise(props, series)} className="h-64 w-full sm:h-80">
         <ResponsiveContainer width="100%" height="100%">
@@ -242,8 +227,6 @@ export function HistoryChart(props: HistoryChartProps): JSX.Element {
             data={series.points}
             margin={{ top: 8, right: 12, bottom: 0, left: 0 }}
             accessibilityLayer={false}
-            syncId={syncId}
-            syncMethod="value"
           >
             <CartesianGrid vertical={false} stroke="var(--color-line)" />
             {shaded.map(([start, end]) => (
@@ -278,7 +261,7 @@ export function HistoryChart(props: HistoryChartProps): JSX.Element {
               ticks={y.ticks}
               allowDataOverflow={false}
               tickFormatter={(value: number) => axisNumber.format(value)}
-              width={yAxisWidth ?? "auto"}
+              width="auto"
               tick={{ fill: "var(--color-ink-muted)", fontSize: 12 }}
               tickLine={false}
               axisLine={false}

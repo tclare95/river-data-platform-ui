@@ -18,7 +18,7 @@ import {
   parameterLabel,
   qualityLabel,
 } from "@/lib/labels";
-import { compareHref, isComparable } from "@/lib/compare";
+import { compareHref } from "@/lib/compare";
 import { parseRange } from "@/lib/history/range";
 import { loadMeasurementDetail } from "@/lib/measurement-detail";
 import { epochMs } from "@/lib/rdp/contract";
@@ -246,20 +246,18 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
 
       <div className="mt-10">
         <MeasurementHistory measurement={measurement} range={range} />
-        {isComparable(measurement) ? (
-          <p className="mt-4">
-            <Link
-              href={compareHref({
-                a: measurement.measurementId,
-                b: related.find(isComparable)?.measurementId,
-                range,
-              })}
-              className="link text-sm"
-            >
-              Compare with another measurement
-            </Link>
-          </p>
-        ) : null}
+        <p className="mt-4">
+          <Link
+            href={compareHref({
+              a: measurement.measurementId,
+              b: related[0]?.measurementId,
+              range,
+            })}
+            className="link text-sm"
+          >
+            Compare with another measurement
+          </Link>
+        </p>
       </div>
 
       <section aria-labelledby="details" className="mt-10 max-w-copy">

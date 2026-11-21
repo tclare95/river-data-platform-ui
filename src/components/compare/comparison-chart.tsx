@@ -1,0 +1,270 @@
+"use client";
+
+import Link from "next/link";
+import {
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ReferenceArea,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { ComparisonValue } from "@/components/compare/comparison-table";
+import { IsolatedDot, timeTicks, valueAxis } from "@/components/history/history-chart";
+import { RainfallBars } from "@/components/history/rainfall-history";
+import { Time } from "@/components/latest-reading";
+import { sharesScale, type AlignedRow, type ComparisonSide } from "@/lib/compare";
+import { formatPeriod } from "@/lib/format";
+import { rainfallBounds } from "@/lib/history/rainfall";
+import { buildSeries } from "@/lib/history/series";
+import { datumSummary, measurementPath, parameterLabel } from "@/lib/labels";
+import { epochMs } from "@/lib/rdp/contract";
+
+const COLORS = ["var(--color-accent)", "var(--color-compare-secondary)"];
+const axisNumber = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3 });
+
+export function ComparisonChart({
+  sides,
+  rows,
+}: {
+  sides: [ComparisonSide, ComparisonSide];
+  rows: AlignedRow[];
+}) {
+  const shared = sharesScale(sides[0].measurement, sides[1].measurement);
+  const series = sides.flatMap(({ measurement, result }, index) => {
+    if (result.status !== "ok") return [];
+    const intervals = "intervals" in result ? result.intervals : null;
+    const observations = "observations" in result ? result.observations : null;
+    if (!intervals?.length && !observations?.length) return [];
+    const gaps = result.coverage.gaps.filter((gap) => gap.reason !== "unknown");
+    const line =
+      observations && buildSeries(observations, measurement.expectedIntervalSeconds, gaps);
+    const max = intervals?.reduce((max, row) => Math.max(max, row.totalMm ?? 0), 0);
+    const label = `${measurement.name} ${parameterLabel(measurement.parameter).toLowerCase()}`;
+    const unit =
+      "periodSeconds" in result
+        ? `${measurement.unit} per ${formatPeriod(result.periodSeconds)}`
+        : measurement.unit;
+
+    return [
+      {
+        index,
+        measurement,
+        result,
+        gaps,
+        intervals,
+        line,
+        label,
+        unit,
+        color: COLORS[index],
+        min: line?.min ?? 0,
+        max: line?.max ?? max ?? 0,
+      },
+    ];
+  });
+  const dual = !shared && series.length === 2;
+  const axes = dual ? series.map((item) => [item]) : [series];
+  let start = epochMs(series[0].result.from);
+  let end = epochMs(series[0].result.to);
+  for (const { intervals } of series) {
+    for (const row of intervals ?? []) {
+      const period = rainfallBounds(row);
+      if (period) {
+        start = Math.min(start, epochMs(period[0]));
+        end = Math.max(end, epochMs(period[1]));
+      }
+    }
+  }
+  const x = timeTicks(start, end);
+  // Recharts snaps the cursor to source rows. Line-only break points stay on the visible axis.
+  const data = rows.map((row) => ({ ...row, t: epochMs(row.time), anchor: 0 })).reverse();
+  const axisSide = (axis: number) => (dual ? (axis === 0 ? "Left axis" : "Right axis") : "Y axis");
+  const legend = series.map((item, i) => {
+    const datum = datumSummary(item.measurement);
+    const axis = [axisSide(i), item.unit, datum].filter(Boolean).join(" · ");
+    return { ...item, axis };
+  });
+
+  return (
+    <figure className="rounded-lg border border-line bg-surface px-2 py-3 sm:px-4">
+      <figcaption>
+        <ul
+          aria-label="Chart legend"
+          className="flex flex-wrap justify-between gap-x-5 gap-y-2 px-2 pb-2"
+        >
+          {legend.map(({ measurement, index, color, intervals, label, axis }) => (
+            <li key={measurement.measurementId} className="flex items-start gap-2 text-sm">
+              <svg aria-hidden="true" className="mt-1 shrink-0" width="20" height="12">
+                {intervals ? (
+                  <rect x="4" y="1" width="12" height="10" fill={color} />
+                ) : (
+                  <line
+                    x1="0"
+                    x2="20"
+                    y1="6"
+                    y2="6"
+                    stroke={color}
+                    strokeWidth="2"
+                    strokeDasharray={index === 1 ? "5 2" : undefined}
+                  />
+                )}
+              </svg>
+              <div>
+                <Link
+                  href={measurementPath(measurement.measurementId)}
+                  className="link font-medium"
+                >
+                  {label}
+                </Link>
+                <p className="text-xs text-ink-muted">{axis}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </figcaption>
+      <div
+        role="img"
+        aria-label={`Shared timeline in UK time. ${legend.map(({ label, axis }) => `${label}, ${axis}`).join(". ")}. Readings are in the comparison table below.`}
+        className="h-64 w-full touch-pan-y sm:h-80"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart
+            data={data}
+            margin={{ top: 8, left: 4, right: 4, bottom: 0 }}
+            accessibilityLayer={false}
+          >
+            <CartesianGrid yAxisId={0} vertical={false} stroke="var(--color-line)" />
+            <XAxis
+              dataKey="t"
+              type="number"
+              scale="linear"
+              domain={[start, end]}
+              allowDataOverflow
+              ticks={x.ticks}
+              tickFormatter={x.format}
+              interval="preserveStartEnd"
+              minTickGap={8}
+              tick={{ fill: "var(--color-ink-muted)", fontSize: 12 }}
+              tickLine={false}
+              axisLine={{ stroke: "var(--color-line-strong)" }}
+            />
+            <XAxis
+              xAxisId="readings"
+              dataKey="t"
+              type="number"
+              scale="linear"
+              domain={[start, end]}
+              allowDataOverflow
+              hide
+            />
+            {axes.map((items, axis) => {
+              const min = Math.min(...items.map((item) => item.min));
+              const max = Math.max(...items.map((item) => item.max));
+              const rainfall = items[0].intervals !== null;
+              const values = rainfall
+                ? { domain: [0, max || 1], ticks: undefined }
+                : valueAxis(min, max);
+
+              return (
+                <YAxis
+                  key={axis}
+                  yAxisId={axis}
+                  orientation={axis === 0 ? "left" : "right"}
+                  type="number"
+                  domain={values.domain}
+                  ticks={values.ticks}
+                  allowDataOverflow
+                  width="auto"
+                  tickFormatter={(value: number) => axisNumber.format(value)}
+                  tick={{ fill: dual ? items[0].color : "var(--color-ink-muted)", fontSize: 12 }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+              );
+            })}
+            {series.flatMap(({ index, color, gaps }) =>
+              gaps.map((gap) => (
+                <ReferenceArea
+                  key={`${index}-${gap.from}`}
+                  yAxisId={0}
+                  x1={Math.max(start, epochMs(gap.from))}
+                  x2={Math.min(end, epochMs(gap.to))}
+                  fill={color}
+                  fillOpacity={0.08}
+                  stroke={color}
+                  strokeOpacity={0.35}
+                  strokeDasharray={index === 0 ? "3 3" : "1 3"}
+                  ifOverflow="hidden"
+                />
+              )),
+            )}
+            {series.map(({ index, color, intervals, line }, i) =>
+              intervals ? (
+                <RainfallBars
+                  key={index}
+                  intervals={intervals}
+                  yAxisId={dual ? i : 0}
+                  color={color}
+                  opacity={0.55}
+                />
+              ) : (
+                <Line
+                  key={index}
+                  data={line?.points}
+                  dataKey="value"
+                  yAxisId={dual ? i : 0}
+                  type="linear"
+                  connectNulls={false}
+                  stroke={color}
+                  strokeWidth={2}
+                  strokeDasharray={index === 1 ? "5 2" : undefined}
+                  dot={IsolatedDot}
+                  activeDot={false}
+                  isAnimationActive={false}
+                />
+              ),
+            )}
+            <Line
+              xAxisId="readings"
+              dataKey="anchor"
+              stroke="none"
+              dot={false}
+              activeDot={false}
+              isAnimationActive={false}
+            />
+            <Tooltip
+              axisId="readings"
+              isAnimationActive={false}
+              cursor={{ stroke: "var(--color-line-strong)" }}
+              content={({ active, activeIndex }) => {
+                const row = active && activeIndex != null ? data[Number(activeIndex)] : undefined;
+                if (!row) return null;
+                return (
+                  <div className="max-w-56 rounded border border-line bg-surface px-3 py-2 text-xs text-ink shadow-sm">
+                    <p className="text-ink-muted">
+                      <Time value={row.time} />
+                    </p>
+                    {legend.map(({ index, label, measurement, color }) => {
+                      const reading = index === 0 ? row.a : row.b;
+                      if (!reading) return null;
+                      return (
+                        <div key={index} className="mt-1">
+                          <p className="font-semibold" style={{ color }}>
+                            {label}
+                          </p>
+                          <ComparisonValue reading={reading} unit={measurement.unit} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </figure>
+  );
+}

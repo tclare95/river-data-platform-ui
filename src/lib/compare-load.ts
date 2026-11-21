@@ -1,5 +1,4 @@
 import "server-only";
-import { isComparable } from "@/lib/compare";
 import { loadHistory, type HistoryResult } from "@/lib/history/load";
 import { rangeWindow, type HistoryRange, type HistoryWindow } from "@/lib/history/range";
 import { parameterLabel } from "@/lib/labels";
@@ -11,8 +10,6 @@ export type ComparableCatalogue =
       status: "ok";
       mode: "fixture" | "live";
       measurements: PublicMeasurement[];
-      /** Whether some public measurements (rainfall period totals) can't be compared yet. */
-      excluded: boolean;
     }
   | { status: "unavailable" };
 
@@ -23,19 +20,16 @@ export async function loadComparable(): Promise<ComparableCatalogue> {
     const all = publicMeasurements((await rdp.listMeasurements()).measurements).map(
       toPublicMeasurement,
     );
-    const measurements = all
-      .filter(isComparable)
-      .sort(
-        (x, y) =>
-          x.name.localeCompare(y.name, "en-GB") ||
-          parameterLabel(x.parameter).localeCompare(parameterLabel(y.parameter), "en-GB") ||
-          x.measurementId.localeCompare(y.measurementId),
-      );
+    const measurements = all.sort(
+      (x, y) =>
+        x.name.localeCompare(y.name, "en-GB") ||
+        parameterLabel(x.parameter).localeCompare(parameterLabel(y.parameter), "en-GB") ||
+        x.measurementId.localeCompare(y.measurementId),
+    );
     return {
       status: "ok",
       mode: rdp.mode,
       measurements,
-      excluded: measurements.length < all.length,
     };
   } catch {
     return { status: "unavailable" };

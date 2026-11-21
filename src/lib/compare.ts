@@ -1,9 +1,7 @@
-/**
- * Two-measurement comparison: which pairs may share a value scale, and the readings of both lined up at their own
- * source times. Pure, so the page, charts and table agree, and nothing here resamples or interpolates.
- */
+import type { HistoryResult, PublicObservation } from "@/lib/history/load";
+import type { RainfallInterval } from "@/lib/history/rainfall";
 import { parseRange, type HistoryRange } from "@/lib/history/range";
-import { epochMs } from "@/lib/rdp/contract";
+import { tickKey } from "@/lib/rdp/contract";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
 export type CompareQuery = { a: string | null; b: string | null; range: HistoryRange };
@@ -30,72 +28,50 @@ export function compareHref(query: { a?: string | null; b?: string | null; range
   return search ? `/compare?${search}` : "/compare";
 }
 
-/** Only instantaneous readings have a charted history; rainfall period totals are not compared yet. */
-export function isComparable(measurement: PublicMeasurement): boolean {
-  return measurement.kind === "instantaneous";
-}
-
 /**
  * Level datums shared between stations. Anything else (EA's station-local `ASD`, `unknown`) is a datum of its own
  * station, so two such levels are heights above different zeros.
  */
 const SHARED_LEVEL_DATUMS = new Set(["AOD", "ODN"]);
 
-export type ScaleBasis =
-  | { shared: true }
-  | { shared: false; reason: "different_parameter" | "different_unit" | "local_datum" };
-
-/**
- * Whether two series' values are directly comparable magnitudes. A shared scale needs the same parameter and unit,
- * and for level the same datum shared between stations (or the same station). Otherwise each chart keeps its own
- * scale and the page says why.
- */
-export function scaleBasis(a: PublicMeasurement, b: PublicMeasurement): ScaleBasis {
-  if (a.parameter !== b.parameter) return { shared: false, reason: "different_parameter" };
-  if (a.unit !== b.unit) return { shared: false, reason: "different_unit" };
-  if (a.parameter === "level" && a.stationId !== b.stationId) {
-    if (a.datum !== b.datum || !SHARED_LEVEL_DATUMS.has(a.datum)) {
-      return { shared: false, reason: "local_datum" };
-    }
-  }
-  return { shared: true };
+export function sharesScale(a: PublicMeasurement, b: PublicMeasurement): boolean {
+  if (a.parameter !== b.parameter || a.unit !== b.unit || a.kind !== b.kind) return false;
+  if (a.kind === "period_total") return a.periodSeconds === b.periodSeconds;
+  if (a.parameter !== "level") return true;
+  if (a.datum !== b.datum || a.datum === "unknown" || a.datum === "none") return false;
+  return a.stationId === b.stationId || SHARED_LEVEL_DATUMS.has(a.datum);
 }
 
-export const SCALE_NOTE: Record<Exclude<ScaleBasis, { shared: true }>["reason"], string> = {
-  different_parameter: "Different kinds of measurement, so each chart has its own scale.",
-  different_unit: "Different units, so each chart has its own scale.",
-  local_datum:
-    "Each gauge measures level from its own local datum, so the heights aren’t directly comparable. Each chart has its own scale.",
-};
-
+export type ComparisonReading = PublicObservation | RainfallInterval;
+export type ComparisonSide = { measurement: PublicMeasurement; result: HistoryResult };
 export type AlignedRow = {
-  /** The source observation time, exactly as RDP returned it for whichever series has a reading. */
-  observedAt: string;
-  a: number | null;
-  b: number | null;
+  time: string;
+  a: ComparisonReading | null;
+  b: ComparisonReading | null;
 };
 
-/**
- * Both series' readings by exact observation time, newest first. A time present in only one series has `null` for
- * the other: no reading is moved, resampled or interpolated to fill it.
- */
+export function comparisonReadings(result: HistoryResult): readonly ComparisonReading[] {
+  if (result.status !== "ok") return [];
+  return "intervals" in result ? result.intervals : result.observations;
+}
+
+/** Join equal source timestamps or provider labels without moving readings or rounding timestamps. */
 export function alignReadings(
-  a: ReadonlyArray<{ observedAt: string; value: number }>,
-  b: ReadonlyArray<{ observedAt: string; value: number }>,
+  a: readonly ComparisonReading[],
+  b: readonly ComparisonReading[],
 ): AlignedRow[] {
-  const rows = new Map<number, AlignedRow>();
-  for (const reading of a) {
-    rows.set(epochMs(reading.observedAt), {
-      observedAt: reading.observedAt,
-      a: reading.value,
-      b: null,
-    });
+  const rows = new Map<string, AlignedRow>();
+  for (const [key, readings] of [
+    ["a", a],
+    ["b", b],
+  ] as const) {
+    for (const reading of readings) {
+      const time = "label" in reading ? reading.label : reading.observedAt;
+      const tick = tickKey(time);
+      const row = rows.get(tick) ?? { time, a: null, b: null };
+      row[key] = reading;
+      rows.set(tick, row);
+    }
   }
-  for (const reading of b) {
-    const key = epochMs(reading.observedAt);
-    const row = rows.get(key);
-    if (row) row.b = reading.value;
-    else rows.set(key, { observedAt: reading.observedAt, a: null, b: reading.value });
-  }
-  return [...rows.entries()].sort(([x], [y]) => y - x).map(([, row]) => row);
+  return [...rows.entries()].sort(([x], [y]) => y.localeCompare(x)).map(([, row]) => row);
 }
