@@ -29,7 +29,7 @@ function valueRange(results: readonly HistoryResult[]): [number, number] | undef
   let min = Infinity;
   let max = -Infinity;
   for (const result of results) {
-    if (result.status !== "ok") continue;
+    if (result.status !== "ok" || !("observations" in result)) continue;
     for (const { value } of result.observations) {
       min = Math.min(min, value);
       max = Math.max(max, value);
@@ -70,7 +70,7 @@ function SeriesPanel({
         Choose a shorter range.
       </EmptyState>
     );
-  } else if (result.status === "deferred") {
+  } else if (result.status === "deferred" || "intervals" in result) {
     body = <EmptyState title="This history isn’t charted yet" />;
   } else if (result.observations.length === 0) {
     body = (
@@ -133,15 +133,19 @@ function ComparisonBody({ sides, range }: { sides: [Side, Side]; range: HistoryR
   const shared = basis.shared ? valueRange([a.result, b.result]) : undefined;
   const span = HISTORY_RANGES[range].label;
   const withReadings = sides.filter(
-    (side): side is Side & { result: Extract<HistoryResult, { status: "ok" }> } =>
-      side.result.status === "ok" && side.result.observations.length > 0,
+    (side) =>
+      side.result.status === "ok" &&
+      "observations" in side.result &&
+      side.result.observations.length > 0,
   );
   const retrieved = sides
-    .map((side) => (side.result.status === "ok" ? side.result.retrievedAt : null))
+    .map((side) =>
+      side.result.status === "ok" && "observations" in side.result ? side.result.retrievedAt : null,
+    )
     .filter((value): value is string => value !== null)
     .sort()[0];
   const observations = (side: Side) =>
-    side.result.status === "ok" ? side.result.observations : [];
+    side.result.status === "ok" && "observations" in side.result ? side.result.observations : [];
   const rows = alignReadings(observations(a), observations(b));
 
   return (

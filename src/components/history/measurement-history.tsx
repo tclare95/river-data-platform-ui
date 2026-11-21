@@ -116,7 +116,7 @@ function HistoryBody({
       </EmptyState>
     );
   }
-  if (result.status === "deferred") return null;
+  if (result.status === "deferred" || "intervals" in result) return null;
 
   const label = parameterLabel(measurement.parameter);
   if (result.observations.length === 0) {
