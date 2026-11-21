@@ -35,7 +35,7 @@ Server Components can fetch RDP data directly for HTML rendering; add Route Hand
 
 Use Server Components by default; isolate interactive components. No generic repository/service abstraction until actual duplication justifies it.
 
-Recharts (pinned) draws the history chart. MapLibre GL JS remains a **provisional choice** for a future map; do not install it until needed.
+Recharts draws the history chart. MapLibre GL JS loads in the browser when a visitor opens the station map.
 
 ## RDP adapter
 
@@ -75,6 +75,7 @@ Recharts (pinned) draws the history chart. MapLibre GL JS remains a **provisiona
 ## Discovery and detail pages
 
 - **Home** (`src/app/(home)/`): the public catalogue with RDP's latest state, grouped by RDP `stationId`. Search and the type filter are pure functions over the already-loaded catalogue (`src/lib/discovery.ts`) in one client component; the view is mirrored in `?q=&type=` with `history.replaceState` and also works as a plain GET form without JavaScript. Search covers station name, verified watercourse, parameter, provider, unit and ID. The type filter appears only when more than one type is published.
+- **Station map**: the disclosure uses those same filtered station groups and plots verified catalogue coordinates, one marker per station ID. The selected station shows the matching measurement links, provider position resolution and public station record where available. The browser requests the attributed [OpenFreeMap Positron basemap](https://openfreemap.org/quick_start/) directly. Basemap errors leave the station markers usable, and the list works independently of WebGL and tiles.
 - **Detail** (`/measurements/{measurementId}`): RDP's measurement ID is the stable URL. `layout.tsx` resolves the ID against the cached catalogue _before_ any streaming, so unknown, malformed and non-displayable IDs return a real 404 (indistinguishable from each other); the page then reads latest under its own `loading.tsx`. The home route group owns the only other loading boundary, because a root `loading.tsx` would stream every route and turn `notFound()` into a 200.
 - Provider quality is shown only when it is a plain word (EA gauge quality arrives as raw JSON text); structured values are omitted, not printed.
 
@@ -91,4 +92,4 @@ Status (20 November 2026): steps 1–3 are done for both stages, and signed read
 
 ## Backend dependency
 
-Catalogue geography follows [RDP #129's consumer handoff](https://github.com/tclare95/river-data-platform/blob/3c49572/docs/CATALOGUE-GEOGRAPHY.md) (observation read API OpenAPI 1.1.0). The adapter accepts older responses and omits malformed or unrecognised geography. The public list and detail show verified river names. The detail can link to the public EA station record, while the coordinates, precision and retrieval time stay in the adapter.
+Catalogue geography follows [RDP #129's consumer handoff](https://github.com/tclare95/river-data-platform/blob/3c49572/docs/CATALOGUE-GEOGRAPHY.md) (observation read API OpenAPI 1.1.0). The adapter accepts older responses and omits malformed or unrecognised geography. The public projection includes verified river names, verified coordinates with their provider resolution, and allowlisted EA station evidence links. Retrieval time stays in the adapter.

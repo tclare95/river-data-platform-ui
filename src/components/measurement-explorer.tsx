@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useMemo, useState } from "react";
 import { MeasurementList } from "@/components/measurement-list";
+import { StationMap } from "@/components/station-map";
 import { EmptyState } from "@/components/states";
 import { Button } from "@/components/button";
 import {
@@ -44,10 +45,20 @@ export function MeasurementExplorer({
   const [q, setQ] = useState(start.q);
   const types = useMemo(() => typeOptions(items), [items]);
   const [type, setType] = useState(start.type && types.includes(start.type) ? start.type : null);
+  const [mapOpen, setMapOpen] = useState(false);
   const searchId = useId();
 
   const results = useMemo(() => filterItems(items, { q, type }), [items, q, type]);
   const groups = useMemo(() => groupByStation(results), [results]);
+  const hasLocations = items.some(({ measurement }) => measurement.position !== undefined);
+  const stations = useMemo(
+    () =>
+      groups.flatMap((group) => {
+        const { position, locationEvidence, source } = group.items[0].measurement;
+        return position ? [{ ...group, position, locationEvidence, source }] : [];
+      }),
+    [groups],
+  );
   const filtered = q.trim() !== "" || type !== null;
 
   useEffect(() => {
@@ -141,6 +152,28 @@ export function MeasurementExplorer({
       <p role="status" className="sr-only">
         {announcement}
       </p>
+
+      {hasLocations ? (
+        <details
+          className="mt-3 rounded-lg border border-line bg-surface"
+          onToggle={(event) => setMapOpen(event.currentTarget.open)}
+        >
+          <summary className="cursor-pointer rounded-lg px-5 py-3 font-medium text-accent sm:px-6">
+            Station map
+          </summary>
+          {mapOpen &&
+            (stations.length ? (
+              <StationMap stations={stations} />
+            ) : (
+              <EmptyState title="No matching stations have verified locations" />
+            ))}
+          <noscript>
+            <p className="px-5 pb-3 text-sm text-ink-muted">
+              The map requires JavaScript. Browse the measurements below.
+            </p>
+          </noscript>
+        </details>
+      ) : null}
 
       <div className="mt-3">
         {groups.length > 0 ? (

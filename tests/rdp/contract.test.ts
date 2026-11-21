@@ -90,7 +90,7 @@ describe("catalogue geography", () => {
     return parseCatalogue({ ...body, data: [{ ...row, ...fields }] }).measurements[0];
   }
 
-  it("preserves verified geography and projects only the public river name and evidence link", async () => {
+  it("projects the verified river, position, precision and public evidence link", async () => {
     const parsed = await parseGeography({
       watercourse,
       location: { ...verified, easting: 462050, providerRecord: "internal" },
@@ -102,6 +102,11 @@ describe("catalogue geography", () => {
     expect(projected).toMatchObject({
       watercourseName: "River Trent",
       locationEvidence: verified.evidence,
+    });
+    expect(projected.position).toEqual({
+      latitude: verified.latitude,
+      longitude: verified.longitude,
+      precisionMetres: verified.precisionMetres,
     });
     expect(projected).not.toHaveProperty("sourceId", sourceId);
     expect(projected).not.toHaveProperty("provider", provider);
@@ -120,6 +125,7 @@ describe("catalogue geography", () => {
     const parsed = await parseGeography({ watercourse, location });
     expect(parsed.location).toEqual(location);
     expect(toPublicMeasurement(parsed).watercourseName).toBe("River Trent");
+    expect(toPublicMeasurement(parsed).position).toBeUndefined();
   });
 
   it.each(["not_applicable", "not_published"])("keeps a %s watercourse unnamed", async (status) => {
@@ -134,6 +140,7 @@ describe("catalogue geography", () => {
     expect(parsed.location).toBeUndefined();
     expect(parsed.watercourse).toBeUndefined();
     expect(parsed.measurementId).toBe("ea-colwick-level");
+    expect(toPublicMeasurement(parsed).position).toBeUndefined();
   });
 
   it.each([
@@ -151,6 +158,7 @@ describe("catalogue geography", () => {
       const parsed = await parseGeography({ watercourse, location });
       expect(parsed.location).toBeUndefined();
       expect(parsed.watercourse).toEqual(watercourse);
+      expect(toPublicMeasurement(parsed).position).toBeUndefined();
     },
   );
 

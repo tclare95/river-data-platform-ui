@@ -32,6 +32,10 @@ export type PublicMeasurement = {
   stationId: string;
   name: string;
   watercourseName?: string;
+  position?: Pick<
+    Extract<Measurement["location"], { status: "verified" }>,
+    "latitude" | "longitude" | "precisionMetres"
+  >;
   locationEvidence?: string;
   parameter: string;
   unit: string;
@@ -49,12 +53,18 @@ export function toPublicMeasurement(measure: Measurement): PublicMeasurement {
   const source = publicSource(measure);
   if (!source) throw new Error("not public");
   const evidence = measure.location?.evidence;
+  const location = measure.location?.status === "verified" ? measure.location : undefined;
   return {
     measurementId: measure.measurementId,
     stationId: measure.stationId,
     name: measure.name,
     watercourseName:
       measure.watercourse?.status === "verified" ? measure.watercourse.name : undefined,
+    position: location && {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      precisionMetres: location.precisionMetres,
+    },
     locationEvidence:
       measure.provider === "environment-agency" && evidence && EA_STATION_RECORD.test(evidence)
         ? evidence
