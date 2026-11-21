@@ -31,6 +31,8 @@ export type PublicMeasurement = {
   measurementId: string;
   stationId: string;
   name: string;
+  watercourseName?: string;
+  locationEvidence?: string;
   parameter: string;
   unit: string;
   datum: string;
@@ -40,13 +42,23 @@ export type PublicMeasurement = {
   source: PublicSource;
 };
 
+const EA_STATION_RECORD =
+  /^https:\/\/environment\.data\.gov\.uk\/flood-monitoring\/id\/stations\/[a-zA-Z0-9_-]+$/;
+
 export function toPublicMeasurement(measure: Measurement): PublicMeasurement {
   const source = publicSource(measure);
   if (!source) throw new Error("not public");
+  const evidence = measure.location?.evidence;
   return {
     measurementId: measure.measurementId,
     stationId: measure.stationId,
     name: measure.name,
+    watercourseName:
+      measure.watercourse?.status === "verified" ? measure.watercourse.name : undefined,
+    locationEvidence:
+      measure.provider === "environment-agency" && evidence && EA_STATION_RECORD.test(evidence)
+        ? evidence
+        : undefined,
     parameter: measure.parameter,
     unit: measure.unit,
     datum: measure.datum,

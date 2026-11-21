@@ -12,9 +12,12 @@ export function MeasurementList({ groups }: { groups: readonly StationGroup[] })
           key={group.stationId}
           className="overflow-hidden rounded-lg border border-line bg-surface"
         >
-          <h2 className="px-5 pt-4 pb-3 text-lg font-semibold tracking-tight sm:px-6">
-            {group.name}
-          </h2>
+          <div className="px-5 pt-4 pb-3 sm:px-6">
+            <h2 className="text-lg font-semibold tracking-tight">{group.name}</h2>
+            {group.watercourseName ? (
+              <p className="text-sm text-ink-muted">{group.watercourseName}</p>
+            ) : null}
+          </div>
           <ul className="divide-y divide-line border-t border-line">
             {group.items.map(({ measurement, latest }) => (
               <li

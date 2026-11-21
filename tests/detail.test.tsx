@@ -73,6 +73,35 @@ describe("measurement detail page", () => {
     expect(screen.getByRole("note")).toHaveTextContent("not real observations");
   });
 
+  it("shows a verified river and links to the public station record", async () => {
+    const fixture = createFixtureTransport(() => NOW);
+    const evidence = "https://environment.data.gov.uk/flood-monitoring/id/stations/4009";
+    useClient("live", async (request) => {
+      if (request.path !== "/v1/measurements") return fixture(request);
+      const body = (await fixture(request)) as { data: Record<string, unknown>[] };
+      const row = body.data.find((item) => item.measurementId === "ea-colwick-level")!;
+      row.watercourse = { name: "River Trent", status: "verified" };
+      row.location = {
+        status: "ambiguous",
+        latitude: null,
+        longitude: null,
+        crs: null,
+        precisionMetres: null,
+        evidence,
+        retrievedAt: "2026-11-20T15:46:00.0000000Z",
+      };
+      return body;
+    });
+    await renderDetail("ea-colwick-level");
+    expect(screen.getByText("River Trent · mASD · Local gauge datum (ASD)")).toBeInTheDocument();
+    const source = screen.getByText("Source and collection").closest("details")!;
+    source.open = true;
+    expect(within(source).getByRole("link", { name: "Environment Agency" })).toHaveAttribute(
+      "href",
+      evidence,
+    );
+  });
+
   it("does not show the sample label for live data", async () => {
     useClient("live");
     await renderDetail("ea-colwick-level");

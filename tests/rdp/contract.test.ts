@@ -8,6 +8,7 @@ import {
   type Measurement,
 } from "@/lib/rdp/contract";
 import { createFixtureTransport } from "@/lib/rdp/fixture";
+import { toPublicMeasurement } from "@/lib/rdp/public";
 
 const NOW = Date.parse("2026-11-19T12:07:00Z");
 const transport = createFixtureTransport(() => NOW);
@@ -57,6 +58,111 @@ describe("catalogue", () => {
     const body = clone(await read("/v1/measurements"));
     mutate(body.data as Record<string, unknown>[]);
     expect(() => parseCatalogue(body)).toThrow(contractError);
+  });
+});
+
+describe("catalogue geography", () => {
+  const watercourse = { status: "verified", name: "River Trent" };
+  const verified = {
+    status: "verified",
+    latitude: 52.952707,
+    longitude: -1.07772,
+    crs: "EPSG:4326",
+    precisionMetres: 10,
+    evidence: "https://environment.data.gov.uk/flood-monitoring/id/stations/4009",
+    retrievedAt: "2026-11-20T15:46:00.0000000Z",
+  };
+  const unknown = {
+    status: "unknown",
+    latitude: null,
+    longitude: null,
+    crs: null,
+    precisionMetres: null,
+    evidence: null,
+    retrievedAt: null,
+  };
+
+  async function parseGeography(fields: Record<string, unknown>) {
+    const body = await read("/v1/measurements");
+    const row = (body.data as Record<string, unknown>[]).find(
+      (item) => item.measurementId === "ea-colwick-level",
+    )!;
+    return parseCatalogue({ ...body, data: [{ ...row, ...fields }] }).measurements[0];
+  }
+
+  it("preserves verified geography and projects only the public river name and evidence link", async () => {
+    const parsed = await parseGeography({
+      watercourse,
+      location: { ...verified, easting: 462050, providerRecord: "internal" },
+    });
+    expect(parsed.watercourse).toEqual(watercourse);
+    expect(parsed.location).toEqual(verified);
+    const { sourceId, provider } = parsed;
+    const projected = toPublicMeasurement(parsed);
+    expect(projected).toMatchObject({
+      watercourseName: "River Trent",
+      locationEvidence: verified.evidence,
+    });
+    expect(projected).not.toHaveProperty("sourceId", sourceId);
+    expect(projected).not.toHaveProperty("provider", provider);
+    expect(projected).not.toHaveProperty("location");
+  });
+
+  it.each([
+    unknown,
+    {
+      ...unknown,
+      status: "ambiguous",
+      evidence: verified.evidence,
+      retrievedAt: verified.retrievedAt,
+    },
+  ])("preserves a $status location without positioning it", async (location) => {
+    const parsed = await parseGeography({ watercourse, location });
+    expect(parsed.location).toEqual(location);
+    expect(toPublicMeasurement(parsed).watercourseName).toBe("River Trent");
+  });
+
+  it.each(["not_applicable", "not_published"])("keeps a %s watercourse unnamed", async (status) => {
+    const entry = { status, name: null };
+    const parsed = await parseGeography({ watercourse: entry });
+    expect(parsed.watercourse).toEqual(entry);
+    expect(toPublicMeasurement(parsed).watercourseName).toBeUndefined();
+  });
+
+  it("accepts an older catalogue entry without geography", async () => {
+    const parsed = await parseGeography({});
+    expect(parsed.location).toBeUndefined();
+    expect(parsed.watercourse).toBeUndefined();
+    expect(parsed.measurementId).toBe("ea-colwick-level");
+  });
+
+  it.each([
+    null,
+    { ...verified, status: "unpublished" },
+    { ...verified, status: "ambiguous" },
+    { ...verified, latitude: 91 },
+    { ...verified, longitude: "-1.07772" },
+    { ...verified, crs: "EPSG:27700" },
+    { ...verified, precisionMetres: 0 },
+    { ...verified, evidence: "not a URI" },
+  ])(
+    "discards malformed or unrecognised locations independently of the watercourse",
+    async (location) => {
+      const parsed = await parseGeography({ watercourse, location });
+      expect(parsed.location).toBeUndefined();
+      expect(parsed.watercourse).toEqual(watercourse);
+    },
+  );
+
+  it("drops a blank verified river name and keeps non-public evidence in the adapter", async () => {
+    const evidence = "https://environment.data.gov.uk/private/stations/4009";
+    const parsed = await parseGeography({
+      watercourse: { ...watercourse, name: " " },
+      location: { ...verified, evidence },
+    });
+    expect(parsed.watercourse).toBeUndefined();
+    expect(parsed.location?.evidence).toBe(evidence);
+    expect(toPublicMeasurement(parsed).locationEvidence).toBeUndefined();
   });
 });
 
