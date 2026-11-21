@@ -20,6 +20,7 @@ vi.mock("maplibre-gl", () => ({
   Map: class {
     constructor(readonly options: { container: HTMLElement }) {
       if (mapMock.fail) throw new Error("WebGL unavailable");
+      options.container.classList.add("maplibregl-map");
     }
     touchZoomRotate = { disableRotation: vi.fn() };
     addControl = vi.fn();
@@ -232,8 +233,10 @@ describe("measurement explorer", () => {
     expect(fetchTrace).not.toHaveBeenCalled();
 
     const mode = screen.getByRole("button", { name: "Trace river", pressed: false });
+    expect(map).toHaveClass("maplibregl-map");
     await user.click(mode);
     expect(mode).toHaveAttribute("aria-pressed", "true");
+    expect(map).toHaveClass("maplibregl-map");
     marker.focus();
     await user.keyboard("{Enter}");
     mapClick(marker);
@@ -279,6 +282,7 @@ describe("measurement explorer", () => {
     expect(screen.queryByText(/upstream route incomplete/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
     await user.click(mode);
+    expect(map).toHaveClass("maplibregl-map");
     mapClick(map);
     expect(fetchTrace).toHaveBeenCalledTimes(2);
   });
