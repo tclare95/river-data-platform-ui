@@ -13,6 +13,18 @@ import {
   type Measurement,
 } from "./contract";
 import { RdpError } from "./errors";
+import {
+  isRiverCoordinate,
+  isRiverDirection,
+  parseRiverLocation,
+  parseRiverRoute,
+  RIVER_LOCATE_PATH,
+  riverSamplePath,
+  type RiverDirection,
+  type RiverGeometry,
+  type RiverLocation,
+  type RiverRoute,
+} from "./river-tracer";
 import type { RdpRequest, RdpTransport } from "./transport";
 
 /** RDP's own bounds (READ-API.md). UI routes apply smaller defaults on top. */
@@ -54,6 +66,12 @@ export type RdpClient = {
   getLatest(ids: readonly string[]): Promise<LatestBatch>;
   getHealth(id: string): Promise<Health>;
   getHistory(id: string, query: HistoryQuery): Promise<HistoryPage>;
+  locateRiver(lon: string, lat: string): Promise<RiverLocation>;
+  getRiverRoute(
+    location: RiverLocation,
+    direction: RiverDirection,
+    geometry?: RiverGeometry,
+  ): Promise<RiverRoute>;
 };
 
 type Entry = { expires: number; value: Promise<unknown> };
@@ -186,6 +204,8 @@ export function createRdpClient(options: ClientOptions): RdpClient {
   // The catalogue has its own slot so request-derived keys can never evict it.
   const catalogueCache = createTtlCache(now, 1);
   const cached = createTtlCache(now);
+  // Route bodies can be much larger than observation pages. Keep their own small cache.
+  const riverRoutes = createTtlCache(now, 8);
   const limit = createLimiter({
     maxConcurrent: options.maxConcurrent ?? 4,
     maxQueued: 16,
@@ -225,6 +245,57 @@ export function createRdpClient(options: ClientOptions): RdpClient {
         parseCatalogue,
       ),
     );
+  }
+
+  async function locateRiver(lon: string, lat: string): Promise<RiverLocation> {
+    if (!isRiverCoordinate(lon, 180) || !isRiverCoordinate(lat, 90))
+      throw new RdpError("INVALID_QUERY");
+    return call(
+      RIVER_LOCATE_PATH,
+      {
+        path: RIVER_LOCATE_PATH,
+        query: { lon, lat },
+        timeoutMs: TIMEOUT_MS.short,
+        maxResponseBytes: 128 * 1024,
+      },
+      parseRiverLocation,
+    );
+  }
+
+  async function getRiverRoute(
+    location: RiverLocation,
+    direction: RiverDirection,
+    geometry: RiverGeometry = "reaches",
+  ): Promise<RiverRoute> {
+    if (
+      !location.sample ||
+      location.status !== "Matched" ||
+      !isRiverDirection(direction) ||
+      (geometry !== "reaches" && geometry !== "none")
+    )
+      throw new RdpError("INVALID_QUERY");
+    const path = riverSamplePath(
+      location.token,
+      location.sample.basinId,
+      location.sample.sampleId,
+      direction,
+    );
+    const result = await riverRoutes(
+      `${location.release.version}:${path}:${geometry}`,
+      60 * 60_000,
+      () =>
+        call(
+          "/v1/river/releases/{release}/basins/{basin}/samples/{sample}/{direction}",
+          { path, query: { geometry }, timeoutMs: 15_000 },
+          (body) => parseRiverRoute(body, location, direction, geometry),
+        ),
+    );
+    if (
+      result.sample.position[0] !== location.sample.position[0] ||
+      result.sample.position[1] !== location.sample.position[1]
+    )
+      throw new RdpError("RESPONSE_CONTRACT_ERROR");
+    return result;
   }
 
   /** IDs are resolved against RDP's published catalogue before any per-measurement request. */
@@ -332,5 +403,7 @@ export function createRdpClient(options: ClientOptions): RdpClient {
     getLatest,
     getHealth,
     getHistory,
+    locateRiver,
+    getRiverRoute,
   });
 }

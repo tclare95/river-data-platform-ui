@@ -51,6 +51,37 @@ Recharts draws the history chart. MapLibre GL JS loads in the browser when a vis
 
 `/api/measurements/{id}/history` returns one bounded page of a fixed 2,000 rows with the adapter's per-call deadline. Windows use whole UTC hours, span at most 31 days and end at or before now. The default is the 7 days ending at the latest whole UTC hour. Continue with `nextCursor` and the original explicit window. The route returns fixed error codes (`INVALID_REQUEST`, `INVALID_CURSOR`, `RESTART_REQUIRED`, `NOT_FOUND`, `UNAVAILABLE`) and caches successful responses with `s-maxage=60`. Server Components read through the adapter directly.
 
+## River Tracer
+
+`GET /api/river/trace?lon=&lat=&direction=upstream|downstream` accepts WGS84 decimal degrees. It performs one
+locate and, when RDP returns a canonical sample, one release-scoped trace. The public response contains the match
+status, release ID and digest, snap offset and approved snapped position, route completeness and direction, source
+attribution, and a GeoJSON MultiLineString of reaches where publication is enabled. Attribution comes from the trace
+response and is absent when locate yields no sample. Ambiguous, unmatched and out-of-coverage locations remain
+successful locate outcomes. A retired release returns 410 and the caller can repeat the coordinate query to locate
+against the active release. Missing routes or samples return 404, oversized results 413, deadlines 504, and upstream
+denials and malformed responses 503.
+
+RDP-UI publication approval covers the pinned `orn-v2-gb` release
+(`838c7ed826b26ee16a11ba2b5be9dc4d286bca8cc0159c6f33d540bf04c0155c`). Other releases return trace metadata and
+attribution with geometry withheld. The publisher FAQ says OGL v3.0 and the homepage also refers to ODbL and DbCL
+below its reference to the points layer. RDP's release evidence still records the terms as unresolved. Maintainer
+confirmation for the exact March 2025 v2 GeoPackage reach and sample layers would reconcile the notices and confirm
+the required attribution and any database reuse obligations. The public projection strips catchments, source feature
+properties, sample identifiers and upstream links. See the [publisher FAQ](https://openrivers.net/faqs/),
+[publisher homepage](https://openrivers.net/) and
+[RDP release evidence](https://github.com/tclare95/river-data-platform/blob/main/docs/RIVER-TRACER.md).
+
+Tracer shares the observation adapter's limiter, OIDC exchange and signed transport. Locate is capped at 128 KiB
+and 8 seconds. Release-scoped traces have a 15-second budget and the signed transport's body cap. The private
+in-process cache holds up to eight validated release/sample/direction/geometry results for one hour, with failed
+reads evicted. Coordinate queries and public responses are uncached. The public JSON cap is 4 MiB. Include the
+tracer path in the Vercel Firewall rate-limit rule before enabling live traffic.
+
+Live signed access is awaiting verification. The stage needs the River Lambda release that admits the dedicated
+UI role and that role's `--ui --river` caller policy applied before a signed smoke from the corresponding Vercel
+environment. See the [RDP rollout instructions](https://github.com/tclare95/river-data-platform/blob/main/docs/PRODUCTION-READ-API.md#rdp-ui-caller).
+
 ## Measurement history
 
 `src/lib/history/` owns the detail page's history read; nothing in it derives freshness or coverage.

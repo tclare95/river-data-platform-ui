@@ -7,6 +7,7 @@ export type RdpRequest = {
   query: Readonly<Record<string, string>>;
   /** Whole-call budget including credentials and the single retry. */
   timeoutMs: number;
+  maxResponseBytes?: number;
 };
 
 /** Resolves a 2xx JSON body or throws an `RdpError`. Fixture and live transports share this shape. */
@@ -70,6 +71,7 @@ export async function withDeadlineAndRetry(
     sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
     random?: () => number;
     now?: () => number;
+    maxResponseBytes?: number;
   } = {},
 ): Promise<unknown> {
   const retry = options.retry ?? DEFAULT_RETRY;
@@ -87,7 +89,7 @@ export async function withDeadlineAndRetry(
         const response = await attempt(controller.signal);
         if (response.ok) {
           try {
-            return await readBoundedJson(response);
+            return await readBoundedJson(response, options.maxResponseBytes);
           } catch (error) {
             throw error instanceof RdpError
               ? error
@@ -100,6 +102,7 @@ export async function withDeadlineAndRetry(
         } catch {
           // Error bodies are optional and AWS-defined at the gateway; the status alone is enough.
         }
+        if (controller.signal.aborted) throw new RdpError("TIMEOUT");
         failure = errorFromResponse(response.status, body);
         const header = Number(response.headers.get("retry-after"));
         retryAfterMs =
