@@ -27,6 +27,6 @@ Accessible published-catalogue discovery; genuine latest and bounded history; tr
 
 ## Explicit non-goals
 
-No accounts, saved views/playgrounds, alerts, user uploads, public developer API, model execution, universal national GIS index or speculative water-safety guidance. River Tracer, rainfall comparison and CSO overlays are later independent slices.
+No accounts, saved views/playgrounds, alerts, user uploads, public developer API, model execution, universal national GIS index or speculative water-safety guidance. River Tracer and CSO overlays are later independent slices.
 
 The currently published RDP catalogue is small, not a comprehensive GB river coverage claim. [RDP #129](https://github.com/tclare95/river-data-platform/issues/129) tracks optional verified geographic metadata.

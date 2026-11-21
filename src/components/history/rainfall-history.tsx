@@ -16,55 +16,35 @@ import { ROWS_PER_PAGE } from "@/components/history/observation-table";
 import { Time } from "@/components/latest-reading";
 import { EmptyState } from "@/components/states";
 import { formatPeriod, formatTime } from "@/lib/format";
-import type { HistoryResult } from "@/lib/history/load";
+import {
+  INELIGIBLE_REASON,
+  missingLabels,
+  rainfallBounds,
+  type RainfallInterval as Interval,
+  type RainfallResult as History,
+} from "@/lib/history/rainfall";
 import { qualityLabel } from "@/lib/labels";
 import { epochMs, tickKey } from "@/lib/rdp/contract";
 
-type History = Extract<HistoryResult, { intervals: unknown }>;
-type Interval = History["intervals"][number];
-type Missing = { fromLabel: string; toLabel: string; count: number };
-
-const REASON = {
-  QualityMissing: "Flagged as missing",
-  QualitySuspect: "Suspect quality",
-  NegativeDepth: "Negative depth",
-};
-
-function bounds(row: Interval) {
-  if (row.labelConvention === "unverified" || !row.periodStart || !row.periodEnd) return null;
-  return [row.periodStart, row.periodEnd] as const;
-}
-
-function missingLabels({ from, to, periodSeconds, intervals }: History) {
-  // RDP selects on a UTC label grid, including from and excluding to. Missing labels have no known physical bounds.
-  const stride = periodSeconds * 1000;
-  const labels = new Set(intervals.map((row) => tickKey(row.label)));
-  const gaps: Missing[] = [];
-  let run: Missing | undefined;
-  for (let t = Math.ceil(epochMs(from) / stride) * stride; t < epochMs(to); t += stride) {
-    const label = new Date(t).toISOString();
-    if (labels.has(tickKey(label))) {
-      run = undefined;
-    } else if (run) {
-      run.toLabel = label;
-      run.count++;
-    } else {
-      run = { fromLabel: label, toLabel: label, count: 1 };
-      gaps.push(run);
-    }
-  }
-  return gaps;
-}
-
 // A categorical bar series would give every row a width, including rows with unverified timing.
-function RainfallBars({ intervals }: { intervals: History["intervals"] }) {
+export function RainfallBars({
+  intervals,
+  yAxisId,
+  color = "var(--color-accent)",
+  opacity = 1,
+}: {
+  intervals: History["intervals"];
+  yAxisId?: number;
+  color?: string;
+  opacity?: number;
+}) {
   const x = useXAxisScale();
-  const y = useYAxisScale();
+  const y = useYAxisScale(yAxisId);
   const baseline = y?.(0);
   if (!x || !y || baseline === undefined) return null;
 
   return intervals.map((row) => {
-    const period = bounds(row);
+    const period = rainfallBounds(row);
     const left = x(epochMs(period?.[0] ?? row.label));
     const right = x(epochMs(period?.[1] ?? row.label));
     if (left === undefined || right === undefined) return null;
@@ -99,8 +79,9 @@ function RainfallBars({ intervals }: { intervals: History["intervals"] }) {
           y={top}
           width={right - left}
           height={baseline - top}
-          fill="var(--color-accent)"
-          stroke="var(--color-accent)"
+          fill={color}
+          fillOpacity={opacity}
+          stroke={color}
           strokeWidth={0.5}
         >
           {title}
@@ -114,9 +95,9 @@ function RainfallBars({ intervals }: { intervals: History["intervals"] }) {
         x2={period ? right : middle}
         y1={row.totalMm === 0 && !period ? baseline - 2 : top}
         y2={baseline}
-        stroke={period ? "var(--color-accent)" : "var(--color-ink-muted)"}
+        stroke={period || yAxisId !== undefined ? color : "var(--color-ink-muted)"}
         strokeWidth={period ? 2 : 1.5}
-        strokeDasharray={!period && row.totalMm > 0 ? "3 2" : undefined}
+        strokeDasharray={!period ? "2 2" : undefined}
       >
         {title}
       </line>
@@ -131,7 +112,7 @@ function RainfallChart({ history, summary }: { history: History; summary: string
   let end = epochMs(to);
   let max = 0;
   for (const row of intervals) {
-    const period = bounds(row);
+    const period = rainfallBounds(row);
     if (period) {
       start = Math.min(start, epochMs(period[0]));
       end = Math.max(end, epochMs(period[1]));
@@ -139,7 +120,7 @@ function RainfallChart({ history, summary }: { history: History; summary: string
     max = Math.max(max, row.totalMm ?? 0);
   }
   const x = timeTicks(start, end);
-  const unverified = intervals.some((row) => row.totalMm !== null && !bounds(row));
+  const unverified = intervals.some((row) => row.totalMm !== null && !rainfallBounds(row));
   const ineligible = intervals.some((row) => row.totalMm === null);
 
   return (
@@ -191,7 +172,13 @@ function RainfallChart({ history, summary }: { history: History; summary: string
   );
 }
 
-function RainfallTable({ intervals, gaps }: { intervals: History["intervals"]; gaps: Missing[] }) {
+function RainfallTable({
+  intervals,
+  gaps,
+}: {
+  intervals: History["intervals"];
+  gaps: ReturnType<typeof missingLabels>;
+}) {
   const [page, setPage] = useState(0);
   const statusId = useId();
   const rows = [...intervals, ...gaps].sort((a, b) =>
@@ -249,7 +236,7 @@ function RainfallTable({ intervals, gaps }: { intervals: History["intervals"]; g
                   </tr>
                 );
               }
-              const period = bounds(row);
+              const period = rainfallBounds(row);
               return (
                 <tr key={row.label}>
                   <th scope="row" className="px-4 py-2 font-normal whitespace-nowrap">
@@ -268,7 +255,7 @@ function RainfallTable({ intervals, gaps }: { intervals: History["intervals"]; g
                     {row.totalMm === null ? "Ineligible" : String(row.totalMm)}
                   </td>
                   <td className="px-4 py-2">
-                    {(row.ineligibleReason && REASON[row.ineligibleReason]) ||
+                    {(row.ineligibleReason && INELIGIBLE_REASON[row.ineligibleReason]) ||
                       qualityLabel(row.quality) ||
                       "Not stated"}
                   </td>

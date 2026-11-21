@@ -91,7 +91,7 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
   const find = (id: string | null) => options.find((item) => item.measurementId === id) ?? null;
   const a = find(query.a);
   const b = find(query.b);
-  // An unknown, restricted or uncomparable ID is treated as not chosen, without saying which it was.
+  // An unknown or restricted ID is treated as not chosen, without saying which it was.
   const invalidA = query.a !== null && !a;
   const same = a !== null && b !== null && a.measurementId === b.measurementId;
   const invalidB = (query.b !== null && !b) || same;
@@ -102,10 +102,7 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
 
   return (
     <PageMain>
-      <PageHeader
-        title="Compare measurements"
-        description="Two measurements over the same period, each in its own unit."
-      />
+      <PageHeader title="Compare measurements" />
       {catalogue.mode === "fixture" ? <FixtureNote className="mt-4" /> : null}
 
       {options.length < 2 ? (
@@ -164,9 +161,6 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
               </Link>
               .
             </p>
-          ) : null}
-          {catalogue.excluded ? (
-            <p className="mt-6 text-sm text-ink-muted">Rainfall can’t be compared yet.</p>
           ) : null}
         </>
       )}

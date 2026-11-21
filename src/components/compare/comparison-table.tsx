@@ -2,25 +2,57 @@
 
 import { useId, useState } from "react";
 import { Button } from "@/components/button";
-import type { AlignedRow } from "@/lib/compare";
-import { formatTime } from "@/lib/format";
+import { Time } from "@/components/latest-reading";
+import type { AlignedRow, ComparisonReading } from "@/lib/compare";
+import { INELIGIBLE_REASON, rainfallBounds } from "@/lib/history/rainfall";
 
 export const COMPARE_ROWS_PER_PAGE = 100;
 
-export type ComparisonColumn = { label: string; unit: string };
+type ComparisonColumn = { label: string; unit: string; rainfall: boolean };
 
-function Cell({ value }: { value: number | null }) {
+export function ComparisonValue({ reading, unit }: { reading: ComparisonReading; unit?: string }) {
+  const rain = "label" in reading ? reading : null;
+  const value = "value" in reading ? reading.value : reading.totalMm;
+  const period = rain && rainfallBounds(rain);
   return (
-    <td className="px-4 py-2 text-right">
-      {value === null ? <span className="text-ink-muted">No reading</span> : String(value)}
+    <>
+      <span>{value === null ? "Ineligible" : `${value}${unit ? ` ${unit}` : ""}`}</span>
+      {rain ? (
+        <span className="block text-ink-muted">
+          {period ? (
+            <>
+              <Time value={period[0]} /> to <Time value={period[1]} />
+              <span className="block">
+                {rain.labelConvention === "period_start" ? "Start label" : "End label"}
+              </span>
+            </>
+          ) : (
+            "Timing unverified"
+          )}
+        </span>
+      ) : null}
+      {rain?.ineligibleReason ? (
+        <span className="block text-ink-muted">{INELIGIBLE_REASON[rain.ineligibleReason]}</span>
+      ) : null}
+      {reading.revision > 1 ? (
+        <span className="block text-ink-muted">Revision {reading.revision} (corrected)</span>
+      ) : null}
+    </>
+  );
+}
+
+function Cell({ reading }: { reading: ComparisonReading | null }) {
+  return (
+    <td className="px-4 py-2 text-right align-top">
+      {reading ? (
+        <ComparisonValue reading={reading} />
+      ) : (
+        <span className="text-ink-muted">No reading</span>
+      )}
     </td>
   );
 }
 
-/**
- * Both series side by side at their exact observation times, newest first. A time with a reading in only one series
- * says "No reading" for the other: values are exactly as RDP returned them and nothing is filled in.
- */
 export function ComparisonTable({
   rows,
   a,
@@ -53,13 +85,12 @@ export function ComparisonTable({
       >
         <table className="w-full text-left text-sm tabular-nums">
           <caption className="sr-only">
-            {a.label} in {a.unit} and {b.label} in {b.unit} at each observation time, newest first.
-            Times are UK time.
+            {a.label} in {a.unit} and {b.label} in {b.unit} newest first. Times are UK time.
           </caption>
           <thead className="border-b border-line text-ink-muted">
             <tr>
               <th scope="col" className="px-4 py-2.5 font-medium">
-                Observed
+                {a.rainfall || b.rainfall ? "Observation time or rainfall label" : "Observed"}
               </th>
               <th scope="col" className="px-4 py-2.5 text-right font-medium">
                 {a.label} ({a.unit})
@@ -71,12 +102,12 @@ export function ComparisonTable({
           </thead>
           <tbody className="divide-y divide-line">
             {visible.map((row) => (
-              <tr key={row.observedAt}>
+              <tr key={row.time}>
                 <th scope="row" className="px-4 py-2 font-normal whitespace-nowrap">
-                  <time dateTime={row.observedAt}>{formatTime(row.observedAt)}</time>
+                  <Time value={row.time} />
                 </th>
-                <Cell value={row.a} />
-                <Cell value={row.b} />
+                <Cell reading={row.a} />
+                <Cell reading={row.b} />
               </tr>
             ))}
           </tbody>
