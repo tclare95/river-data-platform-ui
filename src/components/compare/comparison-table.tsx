@@ -8,7 +8,7 @@ import { INELIGIBLE_REASON, rainfallBounds } from "@/lib/history/rainfall";
 
 export const COMPARE_ROWS_PER_PAGE = 100;
 
-type ComparisonColumn = { label: string; unit: string; rainfall: boolean };
+type ComparisonColumn = { id: string; label: string; unit: string; rainfall: boolean };
 
 export function ComparisonValue({ reading, unit }: { reading: ComparisonReading; unit?: string }) {
   const rain = "label" in reading ? reading : null;
@@ -55,12 +55,10 @@ function Cell({ reading }: { reading: ComparisonReading | null }) {
 
 export function ComparisonTable({
   rows,
-  a,
-  b,
+  columns,
 }: {
   rows: readonly AlignedRow[];
-  a: ComparisonColumn;
-  b: ComparisonColumn;
+  columns: readonly ComparisonColumn[];
 }) {
   const [page, setPage] = useState(0);
   const statusId = useId();
@@ -84,20 +82,19 @@ export function ComparisonTable({
         className="overflow-x-auto rounded-lg border border-line bg-surface"
       >
         <table className="w-full text-left text-sm tabular-nums">
-          <caption className="sr-only">
-            {a.label} in {a.unit} and {b.label} in {b.unit} newest first. Times are UK time.
-          </caption>
+          <caption className="sr-only">Compared readings, newest first. Times are UK time.</caption>
           <thead className="border-b border-line text-ink-muted">
             <tr>
               <th scope="col" className="px-4 py-2.5 font-medium">
-                {a.rainfall || b.rainfall ? "Observation time or rainfall label" : "Observed"}
+                {columns.some(({ rainfall }) => rainfall)
+                  ? "Observation time or rainfall label"
+                  : "Observed"}
               </th>
-              <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                {a.label} ({a.unit})
-              </th>
-              <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                {b.label} ({b.unit})
-              </th>
+              {columns.map(({ id, label, unit }) => (
+                <th key={id} scope="col" className="px-4 py-2.5 text-right font-medium">
+                  {label} ({unit})
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -106,8 +103,9 @@ export function ComparisonTable({
                 <th scope="row" className="px-4 py-2 font-normal whitespace-nowrap">
                   <Time value={row.time} />
                 </th>
-                <Cell reading={row.a} />
-                <Cell reading={row.b} />
+                {columns.map(({ id }, index) => (
+                  <Cell key={id} reading={row.readings[index]} />
+                ))}
               </tr>
             ))}
           </tbody>

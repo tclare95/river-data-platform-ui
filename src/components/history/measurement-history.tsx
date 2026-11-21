@@ -33,9 +33,11 @@ export function knownGaps(coverage: Coverage): KnownGap[] {
 export function RangeNav({
   range,
   hrefFor,
+  prefetch,
 }: {
   range: HistoryRange;
   hrefFor: (range: HistoryRange) => string;
+  prefetch?: false;
 }) {
   return (
     <nav aria-label="History range">
@@ -44,6 +46,7 @@ export function RangeNav({
           <li key={key}>
             <Link
               href={hrefFor(key)}
+              prefetch={prefetch}
               scroll={false}
               aria-current={key === range ? "page" : undefined}
               className={cx(

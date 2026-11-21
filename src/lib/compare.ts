@@ -4,26 +4,24 @@ import { parseRange, type HistoryRange } from "@/lib/history/range";
 import { tickKey } from "@/lib/rdp/contract";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
-export type CompareQuery = { a: string | null; b: string | null; range: HistoryRange };
+export const COMPARE_SLOTS = ["a", "b", "c", "d"] as const;
+export const MAX_COMPARE_AXES = 2;
 
-function single(value: unknown): string | null {
-  // A repeated parameter is a choice that can't be used: a joined value never matches a measurement ID.
-  if (Array.isArray(value)) return value.join(",");
-  return typeof value === "string" && value !== "" ? value : null;
+export function readCompareQuery(params: Record<string, string | string[] | undefined>) {
+  const values = COMPARE_SLOTS.map((slot) => params[slot]);
+  return {
+    ids: values.filter((value): value is string => typeof value === "string" && value !== ""),
+    repeated: values.some(Array.isArray),
+    range: parseRange(params.range),
+  };
 }
 
-/** `?a=&b=&range=`; a missing parameter is not chosen, a repeated one is an unusable choice. */
-export function readCompareQuery(
-  params: Record<string, string | string[] | undefined>,
-): CompareQuery {
-  return { a: single(params.a), b: single(params.b), range: parseRange(params.range) };
-}
-
-export function compareHref(query: { a?: string | null; b?: string | null; range?: HistoryRange }) {
+export function compareHref(ids: readonly string[] = [], range?: HistoryRange) {
   const params = new URLSearchParams();
-  if (query.a) params.set("a", query.a);
-  if (query.b) params.set("b", query.b);
-  if (query.range) params.set("range", query.range);
+  COMPARE_SLOTS.forEach((slot, index) => {
+    if (ids[index]) params.set(slot, ids[index]);
+  });
+  if (range) params.set("range", range);
   const search = params.toString();
   return search ? `/compare?${search}` : "/compare";
 }
@@ -42,12 +40,24 @@ export function sharesScale(a: PublicMeasurement, b: PublicMeasurement): boolean
   return a.stationId === b.stationId || SHARED_LEVEL_DATUMS.has(a.datum);
 }
 
+export function comparisonAxes<T>(
+  items: readonly T[],
+  measurement: (item: T) => PublicMeasurement,
+) {
+  const axes: T[][] = [];
+  for (const item of items) {
+    const shared = axes.find(([first]) => sharesScale(measurement(first), measurement(item)));
+    if (shared) shared.push(item);
+    else axes.push([item]);
+  }
+  return axes;
+}
+
 export type ComparisonReading = PublicObservation | RainfallInterval;
 export type ComparisonSide = { measurement: PublicMeasurement; result: HistoryResult };
 export type AlignedRow = {
   time: string;
-  a: ComparisonReading | null;
-  b: ComparisonReading | null;
+  readings: (ComparisonReading | null)[];
 };
 
 export function comparisonReadings(result: HistoryResult): readonly ComparisonReading[] {
@@ -56,20 +66,14 @@ export function comparisonReadings(result: HistoryResult): readonly ComparisonRe
 }
 
 /** Join equal source timestamps or provider labels without moving readings or rounding timestamps. */
-export function alignReadings(
-  a: readonly ComparisonReading[],
-  b: readonly ComparisonReading[],
-): AlignedRow[] {
+export function alignReadings(series: readonly (readonly ComparisonReading[])[]): AlignedRow[] {
   const rows = new Map<string, AlignedRow>();
-  for (const [key, readings] of [
-    ["a", a],
-    ["b", b],
-  ] as const) {
+  for (const [index, readings] of series.entries()) {
     for (const reading of readings) {
       const time = "label" in reading ? reading.label : reading.observedAt;
       const tick = tickKey(time);
-      const row = rows.get(tick) ?? { time, a: null, b: null };
-      row[key] = reading;
+      const row = rows.get(tick) ?? { time, readings: Array(series.length).fill(null) };
+      row.readings[index] = reading;
       rows.set(tick, row);
     }
   }

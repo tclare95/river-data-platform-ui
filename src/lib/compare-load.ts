@@ -40,7 +40,7 @@ export async function loadComparable(): Promise<ComparableCatalogue> {
  * One series of a comparison over the shared window. Never rejects: configuration and transport failures are the
  * `unavailable` state, independently of the other series.
  */
-export async function loadComparisonHistory(
+async function loadComparisonHistory(
   measurement: PublicMeasurement,
   window: HistoryWindow,
 ): Promise<HistoryResult> {
@@ -51,12 +51,13 @@ export async function loadComparisonHistory(
   }
 }
 
-/** Both series over one window, so they always cover exactly the same period. */
-export function loadComparisonPair(
-  a: PublicMeasurement,
-  b: PublicMeasurement,
-  range: HistoryRange,
-): Promise<[HistoryResult, HistoryResult]> {
+/** All selected series over one shared window. */
+export function loadComparison(measurements: readonly PublicMeasurement[], range: HistoryRange) {
   const window = rangeWindow(range, Date.now());
-  return Promise.all([loadComparisonHistory(a, window), loadComparisonHistory(b, window)]);
+  return Promise.all(
+    measurements.map(async (measurement) => ({
+      measurement,
+      result: await loadComparisonHistory(measurement, window),
+    })),
+  );
 }

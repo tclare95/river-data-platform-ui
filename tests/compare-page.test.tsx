@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { cloneElement, type ReactElement } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,7 +43,7 @@ function withHistory(
   };
 }
 
-async function renderCompare(params: Record<string, string>) {
+async function renderCompare(params: Record<string, string | string[]>) {
   vi.useFakeTimers({ toFake: ["Date"], now: NOW });
   const page = await ComparePage({
     params: Promise.resolve({}),
@@ -64,7 +64,7 @@ describe("compare page", () => {
 
   it("offers only comparable measurements and suggests a first pair", async () => {
     await renderCompare({});
-    const first = screen.getByRole("combobox", { name: "First measurement" });
+    const first = screen.getByRole("combobox", { name: "Choose a measurement" });
     const options = within(first)
       .getAllByRole("option")
       .map((option) => option.textContent);
@@ -82,6 +82,111 @@ describe("compare page", () => {
     expect(screen.queryByRole("region", { name: "History" })).toBeNull();
   });
 
+  it("adds a published measurement with a keyboard-accessible GET form and preserves the selection", async () => {
+    await renderCompare({ a: "ea-shardlow-level", range: "30d" });
+    const form = screen.getByRole<HTMLFormElement>("form", { name: "Choose measurements" });
+    const add = within(form).getByRole("combobox", { name: "Add a measurement" });
+    expect(within(add).queryByRole("option", { name: /^Shardlow · Water level/ })).toBeNull();
+    const user = userEvent.setup();
+    await user.tab();
+    expect(screen.getByRole("link", { name: /^Remove Shardlow/ })).toHaveFocus();
+    await user.tab();
+    expect(add).toHaveFocus();
+    await user.selectOptions(add, "ea-colwick-level");
+    await user.tab();
+    expect(within(form).getByRole("button", { name: "Add" })).toHaveFocus();
+    expect(Object.fromEntries(new FormData(form))).toEqual({
+      a: "ea-shardlow-level",
+      b: "ea-colwick-level",
+      range: "30d",
+    });
+  });
+
+  it("loads four measurements over one window, with a labelled legend and two axes", async () => {
+    const fixture = createFixtureTransport(() => NOW);
+    const transport = vi.fn<RdpTransport>(async (request) => {
+      const body = (await fixture(request)) as Body;
+      return {
+        ...body,
+        data: body.data.map((row) =>
+          row.datum === "ASD" ? { ...row, datum: "AOD", unit: "mAOD" } : row,
+        ),
+      };
+    });
+    useClient(transport);
+    const params = {
+      a: "ea-colwick-level",
+      b: "ea-shardlow-flow",
+      c: "ea-clifton-bridge-level",
+      d: "ea-church-wilne-level",
+    };
+    await renderCompare(params);
+
+    const legend = screen.getByRole("list", { name: "Chart legend" });
+    expect(within(legend).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(legend).getAllByText(/Left axis · mAOD/)).toHaveLength(3);
+    expect(within(legend).getByText(/Right axis · m3\/s/)).toBeVisible();
+    const styles = [...legend.querySelectorAll("line")].map((line) =>
+      line.getAttribute("stroke-dasharray"),
+    );
+    expect(new Set(styles).size).toBe(4);
+    const chart = screen.getByRole("img", { name: /^Shared timeline/ });
+    expect(chart.querySelectorAll(".recharts-yAxis")).toHaveLength(2);
+    expect(chart.querySelectorAll(".recharts-xAxis")).toHaveLength(1);
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.getByRole("link", { name: /^Remove Shardlow · Flow/ })).toHaveAttribute(
+      "href",
+      "/compare?a=ea-colwick-level&b=ea-clifton-bridge-level&c=ea-church-wilne-level&range=7d",
+    );
+    expect(screen.getByRole("link", { name: "30 days" })).toHaveAttribute(
+      "href",
+      "/compare?a=ea-colwick-level&b=ea-shardlow-flow&c=ea-clifton-bridge-level&d=ea-church-wilne-level&range=30d",
+    );
+    await userEvent.click(screen.getByText(/^Compared readings table/));
+    const table = screen.getByRole("table");
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(5);
+    expect(rows(table)[0].querySelectorAll("td")).toHaveLength(4);
+
+    const reads = transport.mock.calls
+      .map(([request]) => request)
+      .filter(({ path }) => path.endsWith("/observations"));
+    expect(reads.map(({ path }) => path).sort()).toEqual(
+      Object.values(params)
+        .map((id) => `/v1/measurements/${id}/observations`)
+        .sort(),
+    );
+    for (const { query } of reads) {
+      expect(query).toMatchObject({
+        from: "2026-11-12T12:00:00.000Z",
+        to: "2026-11-19T12:00:00.000Z",
+        limit: "2000",
+      });
+    }
+  });
+
+  it("explains a third axis in the selector and rejects incompatible deep links before loading history", async () => {
+    const transport = vi.fn(createFixtureTransport(() => NOW));
+    useClient(transport);
+    const pair = { a: "ea-colwick-level", b: "ea-shardlow-level" };
+    await renderCompare(pair);
+    const picker = screen.getByRole("combobox", { name: "Add a measurement" });
+    expect(
+      within(picker).getByRole("option", { name: /Church Wilne.*Needs a third axis/ }),
+    ).toBeDisabled();
+    expect(picker).toHaveAccessibleDescription(/two axes.*level datum/);
+
+    cleanup();
+    transport.mockClear();
+    await renderCompare({ ...pair, c: "ea-church-wilne-level" });
+    expect(screen.getByRole("alert")).toHaveTextContent(/more than two separate axes/);
+    expect(screen.getByRole("link", { name: /^Remove Church Wilne/ })).toHaveAttribute(
+      "href",
+      "/compare?a=ea-colwick-level&b=ea-shardlow-level&range=7d",
+    );
+    expect(screen.queryByRole("region", { name: "History" })).toBeNull();
+    expect(transport).not.toHaveBeenCalled();
+  });
+
   it("draws level and flow on one timeline and preserves the range links", async () => {
     await renderCompare({ a: "ea-shardlow-level", b: "ea-shardlow-flow", range: "7d" });
     const history = screen.getByRole("region", { name: "History" });
@@ -95,7 +200,7 @@ describe("compare page", () => {
       "/compare?a=ea-shardlow-level&b=ea-shardlow-flow&range=30d",
     );
     expect(document.getElementById("compare-status")).toHaveTextContent(
-      "Showing 7 days for both measurements",
+      "Showing 7 days for 2 measurements",
     );
     expect(screen.getByText(/Environment Agency data/)).toBeVisible();
   });
@@ -276,26 +381,23 @@ describe("compare page", () => {
     );
   });
 
-  it("asks for two different measurements", async () => {
+  it("asks for different measurements when a URL repeats an ID", async () => {
     await renderCompare({ a: "ea-shardlow-level", b: "ea-shardlow-level" });
-    expect(screen.getByRole("alert")).toHaveTextContent("Choose two different measurements.");
-    const second = screen.getByRole("combobox", { name: "Second measurement" });
-    expect(second).toHaveAttribute("aria-invalid", "true");
-    expect(second).toHaveAccessibleDescription("Choose two different measurements.");
-    expect(screen.getByRole("combobox", { name: "First measurement" })).not.toHaveAttribute(
-      "aria-invalid",
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose different measurements.");
+    expect(screen.getByRole("combobox", { name: "Add a measurement" })).toHaveAccessibleDescription(
+      "Choose different measurements.",
     );
     expect(screen.queryByRole("region", { name: "History" })).toBeNull();
   });
 
   it("rejects unknown, malformed and repeated IDs", async () => {
     for (const b of ["ea-unknown-level", "../secret", ["ea-shardlow-flow", "ea-colwick-level"]]) {
-      await renderCompare({ a: "ea-shardlow-level", b } as Record<string, string>);
+      await renderCompare({ a: "ea-shardlow-level", b });
       expect(screen.getByRole("alert")).toHaveTextContent(
         "One of those measurements isn’t available to compare.",
       );
       expect(screen.queryByRole("region", { name: "History" })).toBeNull();
-      document.body.innerHTML = "";
+      cleanup();
     }
   });
 

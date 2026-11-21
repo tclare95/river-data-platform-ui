@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useId } from "react";
 import {
   CartesianGrid,
   ComposedChart,
@@ -15,24 +16,23 @@ import { ComparisonValue } from "@/components/compare/comparison-table";
 import { IsolatedDot, timeTicks, valueAxis } from "@/components/history/history-chart";
 import { RainfallBars } from "@/components/history/rainfall-history";
 import { Time } from "@/components/latest-reading";
-import { sharesScale, type AlignedRow, type ComparisonSide } from "@/lib/compare";
+import { comparisonAxes, type AlignedRow, type ComparisonSide } from "@/lib/compare";
 import { formatPeriod } from "@/lib/format";
 import { rainfallBounds } from "@/lib/history/rainfall";
 import { buildSeries } from "@/lib/history/series";
 import { datumSummary, measurementPath, parameterLabel } from "@/lib/labels";
 import { epochMs } from "@/lib/rdp/contract";
 
-const COLORS = ["var(--color-accent)", "var(--color-compare-secondary)"];
+const STYLES = [
+  { color: "var(--color-accent)", dash: undefined, angle: 0 },
+  { color: "var(--color-compare-secondary)", dash: "5 2", angle: 45 },
+  { color: "var(--color-compare-tertiary)", dash: "2 3", angle: -45 },
+  { color: "var(--color-compare-quaternary)", dash: "8 3 2 3", angle: 90 },
+];
 const axisNumber = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3 });
 
-export function ComparisonChart({
-  sides,
-  rows,
-}: {
-  sides: [ComparisonSide, ComparisonSide];
-  rows: AlignedRow[];
-}) {
-  const shared = sharesScale(sides[0].measurement, sides[1].measurement);
+export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows: AlignedRow[] }) {
+  const patternId = useId();
   const series = sides.flatMap(({ measurement, result }, index) => {
     if (result.status !== "ok") return [];
     const intervals = "intervals" in result ? result.intervals : null;
@@ -58,14 +58,14 @@ export function ComparisonChart({
         line,
         label,
         unit,
-        color: COLORS[index],
+        ...STYLES[index],
         min: line?.min ?? 0,
         max: line?.max ?? max ?? 0,
       },
     ];
   });
-  const dual = !shared && series.length === 2;
-  const axes = dual ? series.map((item) => [item]) : [series];
+  const axes = comparisonAxes(series, (item) => item.measurement);
+  const dual = axes.length === 2;
   let start = epochMs(series[0].result.from);
   let end = epochMs(series[0].result.to);
   for (const { intervals } of series) {
@@ -81,24 +81,53 @@ export function ComparisonChart({
   // Recharts snaps the cursor to source rows. Line-only break points stay on the visible axis.
   const data = rows.map((row) => ({ ...row, t: epochMs(row.time), anchor: 0 })).reverse();
   const axisSide = (axis: number) => (dual ? (axis === 0 ? "Left axis" : "Right axis") : "Y axis");
-  const legend = series.map((item, i) => {
+  const firstRain = series.find((item) => item.intervals);
+  const legend = series.map((item) => {
+    const axisId = axes.findIndex((group) => group.includes(item));
     const datum = datumSummary(item.measurement);
-    const axis = [axisSide(i), item.unit, datum].filter(Boolean).join(" · ");
-    return { ...item, axis };
+    const axis = [axisSide(axisId), item.unit, datum].filter(Boolean).join(" · ");
+    // Transparent hatching keeps overlapping interval bars at their actual bounds.
+    const pattern = item.intervals && item !== firstRain ? `${patternId}-${item.index}` : undefined;
+    return { ...item, axisId, axis, pattern };
   });
 
   return (
     <figure className="rounded-lg border border-line bg-surface px-2 py-3 sm:px-4">
+      <svg aria-hidden="true" width="0" height="0" className="absolute">
+        <defs>
+          {legend.map(({ pattern, color, angle }) =>
+            pattern ? (
+              <pattern
+                key={pattern}
+                id={pattern}
+                width="5"
+                height="5"
+                patternUnits="userSpaceOnUse"
+                patternTransform={`rotate(${angle})`}
+              >
+                <path d="M 0 0 L 0 5" stroke={color} strokeWidth="2.5" />
+              </pattern>
+            ) : null,
+          )}
+        </defs>
+      </svg>
       <figcaption>
         <ul
           aria-label="Chart legend"
           className="flex flex-wrap justify-between gap-x-5 gap-y-2 px-2 pb-2"
         >
-          {legend.map(({ measurement, index, color, intervals, label, axis }) => (
+          {legend.map(({ measurement, color, dash, intervals, label, axis, pattern }) => (
             <li key={measurement.measurementId} className="flex items-start gap-2 text-sm">
               <svg aria-hidden="true" className="mt-1 shrink-0" width="20" height="12">
                 {intervals ? (
-                  <rect x="4" y="1" width="12" height="10" fill={color} />
+                  <rect
+                    x="4"
+                    y="1"
+                    width="12"
+                    height="10"
+                    fill={pattern ? `url(#${pattern})` : color}
+                    stroke={color}
+                  />
                 ) : (
                   <line
                     x1="0"
@@ -107,7 +136,7 @@ export function ComparisonChart({
                     y2="6"
                     stroke={color}
                     strokeWidth="2"
-                    strokeDasharray={index === 1 ? "5 2" : undefined}
+                    strokeDasharray={dash}
                   />
                 )}
               </svg>
@@ -178,7 +207,10 @@ export function ComparisonChart({
                   allowDataOverflow
                   width="auto"
                   tickFormatter={(value: number) => axisNumber.format(value)}
-                  tick={{ fill: dual ? items[0].color : "var(--color-ink-muted)", fontSize: 12 }}
+                  tick={{
+                    fill: dual && items.length === 1 ? items[0].color : "var(--color-ink-muted)",
+                    fontSize: 12,
+                  }}
                   tickLine={false}
                   axisLine={false}
                 />
@@ -200,31 +232,36 @@ export function ComparisonChart({
                 />
               )),
             )}
-            {series.map(({ index, color, intervals, line }, i) =>
+            {legend.map(({ index, color, dash, intervals, axisId, pattern }) =>
               intervals ? (
                 <RainfallBars
                   key={index}
                   intervals={intervals}
-                  yAxisId={dual ? i : 0}
+                  yAxisId={axisId}
                   color={color}
+                  fill={pattern ? `url(#${pattern})` : color}
+                  dash={dash}
                   opacity={0.55}
                 />
-              ) : (
+              ) : null,
+            )}
+            {legend.map(({ index, color, dash, line, axisId }) =>
+              line ? (
                 <Line
                   key={index}
-                  data={line?.points}
+                  data={line.points}
                   dataKey="value"
-                  yAxisId={dual ? i : 0}
+                  yAxisId={axisId}
                   type="linear"
                   connectNulls={false}
                   stroke={color}
                   strokeWidth={2}
-                  strokeDasharray={index === 1 ? "5 2" : undefined}
+                  strokeDasharray={dash}
                   dot={IsolatedDot}
                   activeDot={false}
                   isAnimationActive={false}
                 />
-              ),
+              ) : null,
             )}
             <Line
               xAxisId="readings"
@@ -247,7 +284,7 @@ export function ComparisonChart({
                       <Time value={row.time} />
                     </p>
                     {legend.map(({ index, label, measurement, color }) => {
-                      const reading = index === 0 ? row.a : row.b;
+                      const reading = row.readings[index];
                       if (!reading) return null;
                       return (
                         <div key={index} className="mt-1">

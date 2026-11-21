@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { alignReadings, compareHref, readCompareQuery, sharesScale } from "@/lib/compare";
+import {
+  alignReadings,
+  compareHref,
+  comparisonAxes,
+  readCompareQuery,
+  sharesScale,
+} from "@/lib/compare";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
 function measure(overrides: Partial<PublicMeasurement>): PublicMeasurement {
@@ -21,20 +27,26 @@ function measure(overrides: Partial<PublicMeasurement>): PublicMeasurement {
 describe("comparison query", () => {
   it("reads single values, flags repeated ones and defaults the range", () => {
     expect(readCompareQuery({ a: "ea-a", b: "ea-b", range: "30d" })).toEqual({
-      a: "ea-a",
-      b: "ea-b",
+      ids: ["ea-a", "ea-b"],
+      repeated: false,
       range: "30d",
     });
     expect(readCompareQuery({ a: ["ea-a", "ea-c"], b: "", range: "1y" })).toEqual({
-      a: "ea-a,ea-c",
-      b: null,
+      ids: [],
+      repeated: true,
       range: "7d",
     });
   });
 
   it("builds stable links", () => {
-    expect(compareHref({})).toBe("/compare");
-    expect(compareHref({ a: "ea-a", b: undefined, range: "7d" })).toBe("/compare?a=ea-a&range=7d");
+    expect(compareHref()).toBe("/compare");
+    expect(compareHref(["ea-a"], "7d")).toBe("/compare?a=ea-a&range=7d");
+    const ids = ["ea-b", "ea-a", "ea-c", "ea-d"];
+    const href = compareHref(ids, "30d");
+    expect(href).toBe("/compare?a=ea-b&b=ea-a&c=ea-c&d=ea-d&range=30d");
+    expect(
+      readCompareQuery(Object.fromEntries(new URL(href, "https://example.test").searchParams)),
+    ).toEqual({ ids, repeated: false, range: "30d" });
   });
 });
 
@@ -71,6 +83,22 @@ describe("scale basis", () => {
       measure({ stationId: station, parameter: "flow", unit: "m3/s", datum: "unknown" });
     expect(sharesScale(flow("ea-a"), flow("ea-b"))).toBe(true);
   });
+
+  it("groups compatible rainfall periods regardless of selection order", () => {
+    const rain = measure({
+      parameter: "rainfall",
+      kind: "period_total",
+      unit: "mm",
+      periodSeconds: 900,
+    });
+    const daily = { ...rain, periodSeconds: 86400 };
+    const other = { ...rain, stationId: "ea-y" };
+    expect(comparisonAxes([rain, daily, other, colwick], (item) => item)).toEqual([
+      [rain, other],
+      [daily],
+      [colwick],
+    ]);
+  });
 });
 
 function observation(observedAt: string, value: number) {
@@ -82,9 +110,9 @@ describe("aligned readings", () => {
     const a = observation("2026-11-19T10:15:00Z", 2);
     const b = observation("2026-11-19T10:15:00.000Z", 20);
     const later = observation("2026-11-19T10:15:00.0000001Z", -3);
-    expect(alignReadings([a], [b, later])).toEqual([
-      { time: later.observedAt, a: null, b: later },
-      { time: a.observedAt, a, b },
+    expect(alignReadings([[a], [], [b, later], [later]])).toEqual([
+      { time: later.observedAt, readings: [null, null, later, later] },
+      { time: a.observedAt, readings: [a, null, b, null] },
     ]);
   });
 });
