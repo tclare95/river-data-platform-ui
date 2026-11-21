@@ -42,6 +42,7 @@ export function StationMap({ stations }: { stations: readonly LocatedStation[] }
   const container = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const detailsId = useId();
+  const [initialStations] = useState(stations);
   const [styleReady, setStyleReady] = useState(false);
   const [renderer, setRenderer] = useState<{
     map: MapLibreMap;
@@ -96,10 +97,15 @@ export function StationMap({ stations }: { stations: readonly LocatedStation[] }
         library.setWorkerUrl(
           new URL("maplibre-gl/dist/maplibre-gl-worker.mjs", import.meta.url).toString(),
         );
+        const bounds = new library.LngLatBounds();
+        for (const { position } of initialStations) {
+          bounds.extend([position.longitude, position.latitude]);
+        }
         map = new library.Map({
           container: element,
           style: "https://tiles.openfreemap.org/styles/positron",
-          attributionControl: { compact: false },
+          bounds,
+          fitBoundsOptions: { padding: 36, maxZoom: 12, duration: 0 },
           cooperativeGestures: true,
           dragRotate: false,
           pitchWithRotate: false,
@@ -132,7 +138,7 @@ export function StationMap({ stations }: { stations: readonly LocatedStation[] }
       request.current?.abort();
       map?.remove();
     };
-  }, []);
+  }, [initialStations]);
 
   const unavailable = status === "unavailable";
   const map = renderer?.map;
@@ -158,7 +164,6 @@ export function StationMap({ stations }: { stations: readonly LocatedStation[] }
   useEffect(() => {
     if (!renderer || unavailable) return;
     const { map, library } = renderer;
-    const bounds = new library.LngLatBounds();
     const markers = stations.map(({ stationId, name, position }) => {
       const point: [number, number] = [position.longitude, position.latitude];
       const button = document.createElement("button");
@@ -172,10 +177,8 @@ export function StationMap({ stations }: { stations: readonly LocatedStation[] }
         if (heading.current?.dataset.stationId === stationId) heading.current.focus();
         select(stationId);
       };
-      bounds.extend(point);
       return new library.Marker({ element: button }).setLngLat(point).addTo(map);
     });
-    map.fitBounds(bounds, { padding: 36, maxZoom: 12, duration: 0 });
     return () => markers.forEach((marker) => marker.remove());
   }, [detailsId, renderer, stations, unavailable]);
 
@@ -185,7 +188,28 @@ export function StationMap({ stations }: { stations: readonly LocatedStation[] }
   }, [selectedStationId]);
 
   return (
-    <>
+    <div className="overflow-hidden rounded-lg border border-line bg-surface">
+      {/* MapLibre adds its own classes to the container, so keep className stable. */}
+      <div
+        ref={container}
+        role="region"
+        aria-label="Station locations"
+        hidden={unavailable}
+        data-tracing={tracing}
+        className="h-72 bg-canvas sm:h-96 lg:h-[clamp(26rem,60svh,42rem)] data-[tracing=true]:[&_.maplibregl-canvas]:cursor-crosshair"
+      />
+      {unavailable ? (
+        <ErrorState title="Station map unavailable">Browse the station list.</ErrorState>
+      ) : status === "tiles" || status === "loading" ? (
+        <p role="status" className="px-4 py-2 text-sm text-ink-muted">
+          {status === "loading" ? "Loading map…" : "Some basemap details could not load."}
+        </p>
+      ) : null}
+      {!unavailable && stations.length === 0 ? (
+        <p className="border-t border-line px-4 py-2 text-sm text-ink-muted">
+          No matching stations have verified locations
+        </p>
+      ) : null}
       {map && !unavailable ? (
         <div className="space-y-2 border-t border-line px-5 py-3 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
@@ -236,22 +260,6 @@ export function StationMap({ stations }: { stations: readonly LocatedStation[] }
             </p>
           ) : null}
         </div>
-      ) : null}
-      {/* MapLibre adds its own classes to the container, so keep className stable. */}
-      <div
-        ref={container}
-        role="region"
-        aria-label="Station locations"
-        hidden={unavailable}
-        data-tracing={tracing}
-        className="h-64 border-t border-line bg-canvas sm:h-80 data-[tracing=true]:[&_.maplibregl-canvas]:cursor-crosshair"
-      />
-      {unavailable ? (
-        <ErrorState title="Station map unavailable">Browse the measurements below.</ErrorState>
-      ) : status === "tiles" || status === "loading" ? (
-        <p role="status" className="px-5 py-2 text-sm text-ink-muted sm:px-6">
-          {status === "loading" ? "Loading map…" : "Some basemap details could not load."}
-        </p>
       ) : null}
       {tracing && !unavailable ? (
         <div
@@ -344,6 +352,6 @@ export function StationMap({ stations }: { stations: readonly LocatedStation[] }
           </div>
         ) : null}
       </div>
-    </>
+    </div>
   );
 }
