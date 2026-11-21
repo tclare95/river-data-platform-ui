@@ -1,6 +1,6 @@
 import "server-only";
 import { CACHE_TTL_MS, type RdpClient } from "@/lib/rdp/client";
-import { tickKey, type Coverage, type InstantHistoryPage } from "@/lib/rdp/contract";
+import { tickKey, type HistoryPage } from "@/lib/rdp/contract";
 import { RdpError } from "@/lib/rdp/errors";
 import { toPublicHistory } from "@/lib/rdp/public";
 import type { HistoryWindow } from "./range";
@@ -23,19 +23,23 @@ export type PublicObservation = Extract<
   { kind: "instantaneous" }
 >["observations"][number];
 
+type PublicRainfallHistory = Extract<ReturnType<typeof toPublicHistory>, { kind: "period_total" }>;
+
+type LoadedHistory = {
+  status: "ok";
+  from: string;
+  to: string;
+  /** RDP's read instant for the first page; continuation pages keep its fixed cutoff. */
+  retrievedAt: string;
+  coverage: HistoryPage["coverage"];
+  pages: number;
+};
+
 export type HistoryResult =
-  | {
-      status: "ok";
-      from: string;
-      to: string;
-      /** RDP's read instant for the first page; continuation pages keep its fixed cutoff. */
-      retrievedAt: string;
-      coverage: Coverage;
-      /** Every reading in [from, to), strictly ascending, across all pages. */
-      observations: PublicObservation[];
-      pages: number;
-    }
-  /** Rainfall period totals are not charted in this wave. */
+  | (LoadedHistory & { observations: PublicObservation[] })
+  | (LoadedHistory &
+      Pick<PublicRainfallHistory, "periodSeconds" | "intervals" | "window" | "windowUnavailable">)
+  /** The expected instantaneous measurement is a period total. */
   | { status: "deferred" }
   /** More readings than {@link HISTORY_MAX_PAGES} pages: nothing is shown rather than a truncated record. */
   | { status: "too_large" }
@@ -44,17 +48,15 @@ export type HistoryResult =
 
 class Restart extends Error {}
 
-function sameCoverage(a: Coverage, b: Coverage) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 async function readAllPages(
   rdp: RdpClient,
   id: string,
+  kind: HistoryPage["kind"],
   window: HistoryWindow,
 ): Promise<HistoryResult> {
-  const pages: InstantHistoryPage[] = [];
+  const pages: HistoryPage[] = [];
   let cursor: string | undefined;
+  let lastSeen: string | undefined;
   do {
     if (pages.length === HISTORY_MAX_PAGES) return { status: "too_large" };
     let page;
@@ -69,39 +71,65 @@ async function readAllPages(
       }
       throw error;
     }
-    if (page.kind !== "instantaneous") return { status: "deferred" };
-    // RDP follows its own empty internal pages; an empty page that still continues is not a valid answer.
-    if (page.observations.length === 0 && page.nextCursor !== null) {
+    if (page.kind !== kind) {
+      if (kind === "instantaneous" && pages.length === 0) return { status: "deferred" };
       throw new RdpError("RESPONSE_CONTRACT_ERROR");
     }
-    const previous = pages.at(-1);
-    if (previous) {
-      // Pages must continue the same answer: same coverage evidence and strictly later rows.
-      const lastSeen = previous.observations.at(-1)?.observedAt;
-      const firstNew = page.observations[0]?.observedAt;
-      if (
-        !sameCoverage(previous.coverage, page.coverage) ||
-        (lastSeen !== undefined && firstNew !== undefined && tickKey(firstNew) <= tickKey(lastSeen))
-      ) {
-        throw new RdpError("RESPONSE_CONTRACT_ERROR");
-      }
+    const paginated = cursor !== undefined || page.nextCursor !== null;
+    if (
+      page.kind === "period_total" &&
+      (paginated
+        ? page.window !== null || page.windowUnavailable !== "paginated"
+        : page.window === null || page.windowUnavailable !== null)
+    ) {
+      throw new RdpError("RESPONSE_CONTRACT_ERROR");
     }
+
+    const rows = page.kind === "instantaneous" ? page.observations : page.intervals;
+    // RDP follows its own empty internal pages; an empty page that still continues is not a valid answer.
+    if (rows.length === 0 && page.nextCursor !== null) {
+      throw new RdpError("RESPONSE_CONTRACT_ERROR");
+    }
+    // Pages must continue the same answer: same coverage evidence and strictly later times or labels.
+    const first = pages[0];
+    const firstRow = rows[0];
+    const firstNew = firstRow && ("label" in firstRow ? firstRow.label : firstRow.observedAt);
+    if (
+      (first && JSON.stringify(first.coverage) !== JSON.stringify(page.coverage)) ||
+      (lastSeen !== undefined && firstNew !== undefined && tickKey(firstNew) <= tickKey(lastSeen))
+    ) {
+      throw new RdpError("RESPONSE_CONTRACT_ERROR");
+    }
+    const lastRow = rows.at(-1);
+    if (lastRow) lastSeen = "label" in lastRow ? lastRow.label : lastRow.observedAt;
     pages.push(page);
     cursor = page.nextCursor ?? undefined;
   } while (cursor !== undefined);
 
   const first = pages[0];
-  return {
+  const meta: LoadedHistory = {
     status: "ok",
     from: first.from,
     to: first.to,
     retrievedAt: first.requestAsOf,
     coverage: first.coverage,
-    observations: pages.flatMap((page) => {
-      const projected = toPublicHistory(page);
-      return projected.kind === "instantaneous" ? projected.observations : [];
-    }),
     pages: pages.length,
+  };
+  const projected = pages.map(toPublicHistory);
+  if (first.kind === "period_total") {
+    return {
+      ...meta,
+      periodSeconds: first.periodSeconds,
+      window: first.window,
+      windowUnavailable: first.windowUnavailable,
+      intervals: projected.flatMap((page) => (page.kind === "period_total" ? page.intervals : [])),
+    };
+  }
+  return {
+    ...meta,
+    observations: projected.flatMap((page) =>
+      page.kind === "instantaneous" ? page.observations : [],
+    ),
   };
 }
 
@@ -115,20 +143,19 @@ const assembled = new WeakMap<RdpClient, Map<string, Entry>>();
 const MAX_ENTRIES = 200;
 
 /**
- * Reads one window of an instantaneous measurement completely, following RDP's continuation cursor with the
+ * Reads one history window completely, following RDP's continuation cursor with the
  * identical window. The result is all or nothing: a failed page never yields a shorter history presented as whole.
  * Identical windows read within {@link CACHE_TTL_MS.history} share one result.
  */
 export function loadHistory(
   rdp: RdpClient,
   id: string,
-  kind: "instantaneous" | "period_total",
+  kind: HistoryPage["kind"],
   window: HistoryWindow,
 ): Promise<HistoryResult> {
-  if (kind === "period_total") return Promise.resolve({ status: "deferred" });
   let cache = assembled.get(rdp);
   if (!cache) assembled.set(rdp, (cache = new Map()));
-  const key = `${id}|${window.from}|${window.to}`;
+  const key = `${id}|${kind}|${window.from}|${window.to}`;
   const now = Date.now();
   const hit = cache.get(key);
   if (hit && hit.expires > now) return hit.result;
@@ -149,13 +176,12 @@ export function loadHistory(
 async function readHistory(
   rdp: RdpClient,
   id: string,
-  kind: "instantaneous" | "period_total",
+  kind: HistoryPage["kind"],
   window: HistoryWindow,
 ): Promise<HistoryResult> {
-  if (kind === "period_total") return { status: "deferred" };
   for (let attempt = 0; ; attempt++) {
     try {
-      return await readAllPages(rdp, id, window);
+      return await readAllPages(rdp, id, kind, window);
     } catch (error) {
       if (error instanceof Restart && attempt < MAX_RESTARTS) continue;
       return { status: "unavailable" };

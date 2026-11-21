@@ -4,7 +4,7 @@ import { HISTORY_MAX_PAGES, HISTORY_PAGE_LIMIT, loadHistory } from "@/lib/histor
 import { rangeWindow } from "@/lib/history/range";
 import { buildSeries } from "@/lib/history/series";
 import { createRdpClient } from "@/lib/rdp/client";
-import type { Coverage } from "@/lib/rdp/contract";
+import type { Coverage, LabelConvention, RainfallWindow } from "@/lib/rdp/contract";
 import { RdpError } from "@/lib/rdp/errors";
 import { createFixtureTransport } from "@/lib/rdp/fixture";
 import { withDeadlineAndRetry, type RdpTransport } from "@/lib/rdp/transport";
@@ -14,6 +14,7 @@ const MINUTE = 60_000;
 const QUARTER = 15 * MINUTE;
 const DAY = 24 * 60 * MINUTE;
 const ID = "ea-colwick-level";
+const RAIN_ID = "ea-stone-rainfall";
 /** The detail page's 30-day window at NOW: [from, to) on whole UTC hours. */
 const WINDOW = { from: "2026-10-20T13:00:00.000Z", to: "2026-11-19T13:00:00.000Z" };
 const FROM_MS = Date.parse(WINDOW.from);
@@ -151,7 +152,7 @@ describe("loadHistory: continuation", () => {
     );
     const result = await load();
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok" || !("observations" in result)) return;
     expect(result.pages).toBe(2);
     expect(result.observations).toHaveLength(2880);
     expect(result.observations.map((o) => o.observedAt)).toEqual(rows.map((r) => r.observedAt));
@@ -180,7 +181,8 @@ describe("loadHistory: continuation", () => {
     const { load } = setup(paged([row(FROM_MS, 1.5), row(FROM_MS + QUARTER, 1.6)]));
     const result = await load();
     expect(result).toMatchObject({ status: "ok", pages: 1 });
-    if (result.status === "ok") expect(result.observations[0].observedAt).toBe(iso(FROM_MS));
+    if (result.status === "ok" && "observations" in result)
+      expect(result.observations[0].observedAt).toBe(iso(FROM_MS));
   });
 
   it("treats a row at the exclusive end as a broken page, not a shorter history", async () => {
@@ -260,7 +262,7 @@ describe("loadHistory: failed continuation pages", () => {
     const result = await load();
     expect(requests.map((q) => q.cursor)).toEqual([undefined, "g1o2000", undefined, "g2o2000"]);
     expect(result).toMatchObject({ status: "ok", pages: 2 });
-    if (result.status === "ok") {
+    if (result.status === "ok" && "observations" in result) {
       expect(result.observations.map((o) => o.observedAt)).toEqual(rows.map((r) => r.observedAt));
     }
     const windows = requests.map(({ from, to, limit }) => ({ from, to, limit }));
@@ -298,7 +300,8 @@ describe("loadHistory: failed continuation pages", () => {
     const { load, requests } = setup(paged(rows, { pageSize: 10 }));
     const result = await load();
     expect(result).toMatchObject({ status: "ok", pages: 4 });
-    if (result.status === "ok") expect(result.observations).toHaveLength(40);
+    if (result.status === "ok" && "observations" in result)
+      expect(result.observations).toHaveLength(40);
     expect(requests).toHaveLength(4);
   });
 });
@@ -387,7 +390,7 @@ describe("loadHistory: projection", () => {
     const { load } = setup(paged(rows));
     const result = await load();
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok" || !("observations" in result)) return;
     expect(result.observations).toEqual([
       {
         observedAt: iso(t),
@@ -428,16 +431,6 @@ describe("loadHistory: projection", () => {
     expect(JSON.stringify(result)).not.toMatch(/futureField|secret|requestId|debug/);
   });
 
-  it("defers period totals without calling RDP history", async () => {
-    const { rdp, requests } = setup(() => {
-      throw new Error("unexpected history call");
-    });
-    await expect(
-      loadHistory(rdp, "ea-stone-rainfall", "period_total", rangeWindow("7d", NOW)),
-    ).resolves.toEqual({ status: "deferred" });
-    expect(requests).toHaveLength(0);
-  });
-
   it("defers when RDP answers with a period-total page", async () => {
     const fixture = createFixtureTransport(() => NOW);
     const rdp = createRdpClient({
@@ -453,7 +446,239 @@ describe("loadHistory: projection", () => {
   });
 });
 
+function rainfallRow(
+  t: number,
+  labelConvention: LabelConvention,
+  totalMm: number,
+  extra: Row = {},
+) {
+  return {
+    label: iso(t),
+    labelConvention,
+    periodSeconds: 900,
+    periodStart:
+      labelConvention === "unverified"
+        ? null
+        : iso(t - (labelConvention === "period_end" ? QUARTER : 0)),
+    periodEnd:
+      labelConvention === "unverified"
+        ? null
+        : iso(t + (labelConvention === "period_start" ? QUARTER : 0)),
+    totalMm,
+    sourceValue: String(totalMm),
+    quality: null,
+    eligible: true,
+    ineligibleReason: null,
+    knownAt: null,
+    sourceId: "ea-flood-monitoring",
+    providerMeasureId: "3014-rainfall-tipping_bucket_raingauge-t-15_min-mm",
+    ingestedAt: iso(t + MINUTE),
+    sourceReference: "fixture:rain",
+    revision: 1,
+    ...extra,
+  };
+}
+
+function rainPage(
+  query: Query,
+  data: Row[],
+  nextCursor: string | null,
+  window: RainfallWindow | null = null,
+) {
+  return body(query, data, nextCursor, {
+    measurementId: RAIN_ID,
+    valueType: "total",
+    periodSeconds: 900,
+    knownAt: null,
+    window,
+    windowUnavailable: nextCursor !== null || query.cursor !== undefined ? "paginated" : null,
+  });
+}
+
+describe("loadHistory: rainfall", () => {
+  const range = { from: WINDOW.from, to: iso(FROM_MS + 4 * QUARTER) };
+  const rain = [
+    rainfallRow(FROM_MS, "period_end", 0),
+    rainfallRow(FROM_MS + QUARTER, "period_end", 0.4, {
+      quality: "Missing",
+      eligible: false,
+      ineligibleReason: "QualityMissing",
+    }),
+    rainfallRow(FROM_MS + 3 * QUARTER, "period_end", 0.8, { revision: 2 }),
+  ];
+  const summary: RainfallWindow = {
+    firstLabel: iso(FROM_MS),
+    lastLabel: iso(FROM_MS + 3 * QUARTER),
+    expectedIntervals: 4,
+    reported: 3,
+    eligible: 2,
+    absent: 1,
+    ineligible: 1,
+    notKnownAt: 0,
+    status: "incomplete",
+    totalMm: null,
+    labelConvention: "period_end",
+    periodStart: iso(FROM_MS - QUARTER),
+    periodEnd: iso(FROM_MS + 3 * QUARTER),
+    gaps: [
+      {
+        fromLabel: iso(FROM_MS + QUARTER),
+        toLabel: iso(FROM_MS + QUARTER),
+        intervals: 1,
+        reason: "QualityMissing",
+      },
+      {
+        fromLabel: iso(FROM_MS + 2 * QUARTER),
+        toLabel: iso(FROM_MS + 2 * QUARTER),
+        intervals: 1,
+        reason: "absent",
+      },
+    ],
+    gapsTruncated: false,
+    knownAt: null,
+    knownAtBasis: "latest_stored",
+  };
+
+  it("keeps RDP's whole-window gaps and distinguishes zero, ineligible and absent intervals", async () => {
+    const { rdp } = setup((query) => rainPage(query, rain, null, summary));
+    const result = await loadHistory(rdp, RAIN_ID, "period_total", range);
+    expect(result).toMatchObject({
+      status: "ok",
+      pages: 1,
+      periodSeconds: 900,
+      window: summary,
+      windowUnavailable: null,
+      intervals: [
+        {
+          label: iso(FROM_MS),
+          periodStart: iso(FROM_MS - QUARTER),
+          periodEnd: iso(FROM_MS),
+          totalMm: 0,
+          eligible: true,
+        },
+        {
+          label: iso(FROM_MS + QUARTER),
+          quality: "Missing",
+          totalMm: null,
+          eligible: false,
+          ineligibleReason: "QualityMissing",
+        },
+        { label: iso(FROM_MS + 3 * QUARTER), totalMm: 0.8, revision: 2 },
+      ],
+    });
+  });
+
+  it("follows the same label window across pages without deriving gaps, bounds or totals", async () => {
+    const start = rainfallRow(FROM_MS + QUARTER, "period_start", 0.6);
+    const unverified = rainfallRow(FROM_MS + 3 * QUARTER, "unverified", 0, { revision: 2 });
+    const { rdp, requests } = setup((query) =>
+      query.cursor
+        ? rainPage(query, [unverified], null)
+        : rainPage(query, [rain[0], start], "rain2"),
+    );
+    const result = await loadHistory(rdp, RAIN_ID, "period_total", range);
+    expect(result).toMatchObject({
+      status: "ok",
+      pages: 2,
+      retrievedAt: iso(NOW),
+      coverage: UNKNOWN,
+      window: null,
+      windowUnavailable: "paginated",
+      intervals: [
+        {
+          label: iso(FROM_MS),
+          labelConvention: "period_end",
+          periodStart: iso(FROM_MS - QUARTER),
+          periodEnd: iso(FROM_MS),
+        },
+        {
+          label: start.label,
+          labelConvention: "period_start",
+          periodStart: start.label,
+          periodEnd: iso(FROM_MS + 2 * QUARTER),
+        },
+        {
+          label: unverified.label,
+          labelConvention: "unverified",
+          periodStart: null,
+          periodEnd: null,
+          totalMm: 0,
+          revision: 2,
+        },
+      ],
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({ limit: String(HISTORY_PAGE_LIMIT) });
+    expect(requests[1]).toEqual({ ...requests[0], cursor: "rain2" });
+  });
+
+  it.each(["failed continuation", "overlapping label", "summary on a continuation"])(
+    "returns no rainfall intervals after %s",
+    async (issue) => {
+      const { rdp, requests } = setup((query) => {
+        if (!query.cursor) return rainPage(query, rain.slice(0, 2), "rain2");
+        if (issue === "failed continuation") throw new RdpError("STORAGE_UNAVAILABLE", 503);
+        if (issue === "overlapping label") return rainPage(query, rain.slice(1), null);
+        return rainPage(query, rain.slice(2), null, summary);
+      });
+      await expect(loadHistory(rdp, RAIN_ID, "period_total", range)).resolves.toEqual({
+        status: "unavailable",
+      });
+      expect(requests).toHaveLength(2);
+    },
+  );
+
+  it.each([false, true])(
+    "restarts from a fresh first page once (repeated failure: %s)",
+    async (repeated) => {
+      const { rdp, requests } = setup((query, call) => {
+        if (query.cursor === "stale" || (repeated && query.cursor === "fresh")) {
+          throw new RdpError("CURSOR_STALE", 409);
+        }
+        if (query.cursor === "fresh") return rainPage(query, rain.slice(1), null);
+        if (call === 1) return rainPage(query, [{ ...rain[0], totalMm: 0.2 }], "stale");
+        return rainPage(query, rain.slice(0, 1), "fresh");
+      });
+      const result = await loadHistory(rdp, RAIN_ID, "period_total", range);
+      expect(requests.map((query) => query.cursor)).toEqual([
+        undefined,
+        "stale",
+        undefined,
+        "fresh",
+      ]);
+      if (repeated) {
+        expect(result).toEqual({ status: "unavailable" });
+      } else {
+        expect(result).toMatchObject({
+          status: "ok",
+          pages: 2,
+          intervals: [{ totalMm: 0 }, { eligible: false }, { revision: 2 }],
+        });
+      }
+    },
+  );
+});
+
 describe("loadHistory: fixture transport", () => {
+  it("assembles 30 days of fixture rainfall without a whole-window summary", async () => {
+    const { rdp } = setup((query) =>
+      createFixtureTransport(() => NOW)({
+        path: `/v1/measurements/${RAIN_ID}/observations`,
+        query,
+        timeoutMs: 20_000,
+      }),
+    );
+    const result = await loadHistory(rdp, RAIN_ID, "period_total", WINDOW);
+    expect(result).toMatchObject({
+      status: "ok",
+      pages: 2,
+      window: null,
+      windowUnavailable: "paginated",
+    });
+    if (result.status !== "ok" || !("intervals" in result)) throw new Error("expected rainfall");
+    expect(result.intervals.length).toBeGreaterThan(HISTORY_PAGE_LIMIT);
+    expect(new Set(result.intervals.map(({ label }) => label)).size).toBe(result.intervals.length);
+  });
   it("reads 30 days of Colwick over several pages with a weekly missing interval and corrections", async () => {
     const fixture = createFixtureTransport(() => NOW);
     const calls: Query[] = [];
@@ -470,7 +695,7 @@ describe("loadHistory: fixture transport", () => {
     const window = rangeWindow("30d", NOW);
     const result = await loadHistory(rdp, ID, "instantaneous", window);
     expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
+    if (result.status !== "ok" || !("observations" in result)) return;
     expect(result.pages).toBeGreaterThanOrEqual(2);
     expect(calls).toHaveLength(result.pages);
 
