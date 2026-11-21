@@ -30,7 +30,7 @@ Everything else is already configured: OIDC (team issuer), the per-environment `
 ## Known limits (post-MVP)
 
 - **Map:** waits for verified coordinates ([RDP #129](https://github.com/tclare95/river-data-platform/issues/129), open).
-- **Rainfall:** period-total history and rainfall comparison are not charted yet (6 of 12 production measurements).
+- **Rainfall:** detail history shows interval totals. Comparison remains limited to instantaneous measurements.
 - **Not-found pages:** a `notFound()` 404 has a correct status and `noindex`, but its HTML body is filled in only by JavaScript. This reproduces with a one-line route on Next 16.4.6; unmatched URLs render fully.
 - **Hung upstream:** a page can take more than 40 s to reach "unavailable" (latest 8 s, then up to 20 s per history page). Consider one overall history budget.
 - **Charts:** the window ends at the next whole hour, so the right edge of a chart can be up to an hour in the future.

@@ -218,10 +218,43 @@ describe("measurement history on the detail page", () => {
     expect(within(history).getByText(/^No readings for 3 h 15 min between/)).toBeVisible();
   });
 
-  it("defers rainfall period totals instead of charting them as readings", async () => {
+  it("shows fixture rainfall for seven days with a keyboard-accessible readings table", async () => {
     const history = await renderDetail("ea-stone-rainfall");
-    expect(history).toHaveTextContent("Rainfall history isn’t charted yet");
-    expect(within(history).queryByRole("navigation")).toBeNull();
-    expect(within(history).queryByRole("img")).toBeNull();
+    expect(
+      await within(history).findByRole("img", { name: /^Rainfall interval totals in mm/ }),
+    ).toBeVisible();
+    expect(within(history).getByRole("link", { name: "7 days" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    const user = userEvent.setup();
+    const summary = within(history).getByText(/^Readings table/);
+    await user.click(summary);
+    await user.tab();
+    expect(within(history).getByRole("region", { name: "Rainfall readings" })).toHaveFocus();
+    expect(within(history).getByRole("columnheader", { name: "Rainfall (mm)" })).toBeVisible();
+    expect(within(history).getByText(/^No reading for/)).toBeVisible();
+    expect(within(history).getAllByRole("rowheader")[0].querySelectorAll("time")).toHaveLength(2);
+    await user.tab();
+    expect(within(history).getByRole("button", { name: "Newer" })).toHaveFocus();
+    await user.tab();
+    await user.keyboard("{Enter}");
+    expect(within(history).getByText(/^Rows 101–200 of/)).toBeVisible();
+    expect(within(history).getByRole("button", { name: "Older" })).toHaveFocus();
+  });
+
+  it("shows rainfall across continuation pages without a verified total", async () => {
+    const history = await renderDetail("ea-stone-rainfall", "30d");
+    expect(await within(history).findByRole("img", { name: /last 30 days/ })).toBeVisible();
+    expect(within(history).getByRole("link", { name: "30 days" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    const summary = within(history).getByText(/^Readings table/);
+    expect(Number(summary.textContent!.replace(/\D/g, ""))).toBeGreaterThan(2000);
+    expect(history).toHaveTextContent(
+      /\d+ missing · 0 ineligible. No verified total for this range/,
+    );
+    expect(history).not.toHaveTextContent(/Total across the selected labels/);
   });
 });
