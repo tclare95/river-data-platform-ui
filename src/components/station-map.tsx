@@ -237,12 +237,14 @@ export function StationMap({ stations }: { stations: readonly LocatedStation[] }
           ) : null}
         </div>
       ) : null}
+      {/* MapLibre adds its own classes to the container, so keep className stable. */}
       <div
         ref={container}
         role="region"
         aria-label="Station locations"
         hidden={unavailable}
-        className={`h-64 border-t border-line bg-canvas sm:h-80 ${tracing ? "[&_.maplibregl-canvas]:cursor-crosshair" : ""}`}
+        data-tracing={tracing}
+        className="h-64 border-t border-line bg-canvas sm:h-80 data-[tracing=true]:[&_.maplibregl-canvas]:cursor-crosshair"
       />
       {unavailable ? (
         <ErrorState title="Station map unavailable">Browse the measurements below.</ErrorState>
