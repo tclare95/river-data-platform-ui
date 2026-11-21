@@ -3,6 +3,7 @@ import { Suspense, use } from "react";
 import { Announce } from "@/components/history/announce";
 import { HistoryChart } from "@/components/history/history-chart";
 import { ObservationTable } from "@/components/history/observation-table";
+import { RainfallHistory } from "@/components/history/rainfall-history";
 import { Time } from "@/components/latest-reading";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { cx } from "@/lib/cx";
@@ -116,7 +117,28 @@ function HistoryBody({
       </EmptyState>
     );
   }
-  if (result.status === "deferred" || "intervals" in result) return null;
+  if (result.status === "deferred") return null;
+  if ("intervals" in result) {
+    return (
+      <div className="space-y-4">
+        <Announce
+          targetId={STATUS_ID}
+          text={
+            result.intervals.length
+              ? `Showing ${span} of rainfall history`
+              : `No readings in the last ${span}`
+          }
+        />
+        <RainfallHistory key={range} history={result} span={span} />
+        <div className="space-y-1">
+          <CoverageNote coverage={result.coverage} />
+          <p className="text-sm text-ink-muted">
+            Retrieved <Time value={result.retrievedAt} />. Times are UK time.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const label = parameterLabel(measurement.parameter);
   if (result.observations.length === 0) {
@@ -204,7 +226,7 @@ async function readHistory(measurement: PublicMeasurement, range: HistoryRange) 
 
 /**
  * Observed history for the selected range. Streams under its own boundary so the latest reading is never held
- * back by a multi-page history read. Rainfall period totals are deferred to their own view.
+ * back by a multi-page history read.
  */
 export function MeasurementHistory({
   measurement,
@@ -218,16 +240,6 @@ export function MeasurementHistory({
       History
     </h2>
   );
-  if (measurement.kind === "period_total") {
-    return (
-      <section aria-labelledby="history">
-        {heading}
-        <EmptyState title="Rainfall history isn’t charted yet" className="mt-3">
-          Period totals need their own view, which is planned.
-        </EmptyState>
-      </section>
-    );
-  }
   return (
     <section aria-labelledby="history">
       <div className="flex flex-wrap items-center justify-between gap-3">
