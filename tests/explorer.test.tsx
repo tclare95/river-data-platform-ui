@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MeasurementExplorer } from "@/components/measurement-explorer";
 import { createRdpClient } from "@/lib/rdp/client";
 import { createFixtureTransport } from "@/lib/rdp/fixture";
@@ -11,6 +11,8 @@ const mapMock = vi.hoisted(() => ({
   fail: false,
   events: new EventTarget(),
   setLngLat: vi.fn(),
+  setData: vi.fn(),
+  addSource: vi.fn(),
 }));
 
 vi.mock("maplibre-gl", () => ({
@@ -24,15 +26,24 @@ vi.mock("maplibre-gl", () => ({
     fitBounds = vi.fn();
     remove = vi.fn();
     on = mapMock.events.addEventListener.bind(mapMock.events);
+    off = mapMock.events.removeEventListener.bind(mapMock.events);
     once = (name: string, handler: EventListener) =>
       mapMock.events.addEventListener(name, handler, { once: true });
+    getContainer = () => this.options.container;
+    getCenter = () => ({ wrap: () => ({ lng: -1.3, lat: 52.8 }) });
+    addLayer = vi.fn();
+    addSource = mapMock.addSource;
+    getSource = () =>
+      mapMock.addSource.mock.calls.length ? { setData: mapMock.setData } : undefined;
   },
   NavigationControl: class {},
   LngLatBounds: class {
     extend = vi.fn();
   },
   Marker: class {
-    constructor(readonly options: { element: HTMLElement }) {}
+    constructor(readonly options: { element: HTMLElement }) {
+      options.element.classList.add("maplibregl-marker");
+    }
     setLngLat(point: [number, number]) {
       mapMock.setLngLat(point);
       return this;
@@ -63,6 +74,21 @@ async function fixtureItems(): Promise<OverviewItem[]> {
 
 const links = () => screen.queryAllByRole("link").map((link) => link.textContent);
 
+function mapClick(target: HTMLElement, lng = -1.25, lat = 52.5) {
+  act(() => {
+    mapMock.events.dispatchEvent(
+      Object.assign(new Event("click"), {
+        lngLat: { wrap: () => ({ lng, lat }) },
+        originalEvent: { target },
+      }),
+    );
+  });
+}
+
+const traceRelease = { releaseId: "test-network", version: "0123456789abcdef".repeat(4) };
+const currentTraceData = () =>
+  mapMock.setData.mock.lastCall?.[0] ?? mapMock.addSource.mock.lastCall?.[1].data;
+
 describe("measurement explorer", () => {
   let items: OverviewItem[];
   beforeEach(async () => {
@@ -71,7 +97,10 @@ describe("measurement explorer", () => {
     mapMock.fail = false;
     mapMock.events = new EventTarget();
     mapMock.setLngLat.mockClear();
+    mapMock.setData.mockClear();
+    mapMock.addSource.mockClear();
   });
+  afterEach(() => vi.unstubAllGlobals());
 
   function addPublishedPositions() {
     // Shardlow and Kegworth from the RDP #129 catalogue example.
@@ -156,6 +185,183 @@ describe("measurement explorer", () => {
     );
     expect(screen.queryByRole("link", { name: "Shardlow Flow" })).not.toBeInTheDocument();
   });
+
+  it("traces only in trace mode and keeps station markers available for browsing", async () => {
+    addPublishedPositions();
+    const user = userEvent.setup();
+    const fetchTrace = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchTrace);
+    const route = { direction: "downstream", completeness: "incomplete" };
+    const geometry = {
+      type: "MultiLineString",
+      coordinates: [
+        [
+          [-1.32, 52.86],
+          [-1.3, 52.88],
+        ],
+        [
+          [-1.2, 52.9],
+          [-1.1, 52.92],
+        ],
+      ],
+    };
+    const matched = {
+      matchStatus: "Matched",
+      release: traceRelease,
+      snappedSample: { position: [-1.32, 52.86], snapOffsetM: 17.6 },
+      route,
+      attribution: "Synthetic network attribution",
+      geometry,
+    };
+    fetchTrace.mockResolvedValueOnce(Response.json({ data: matched }));
+    fetchTrace.mockResolvedValueOnce(
+      Response.json({
+        data: {
+          ...matched,
+          route: { ...route, direction: "upstream" },
+          geometry: { type: "LineString", coordinates: geometry.coordinates[0] },
+        },
+      }),
+    );
+    render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    await user.click(screen.getByText("Station map"));
+    const map = screen.getByRole("region", { name: "Station locations" });
+    const marker = await within(map).findByRole("button", { name: "Shardlow" });
+    act(() => mapMock.events.dispatchEvent(new Event("load")));
+    mapClick(map);
+    expect(fetchTrace).not.toHaveBeenCalled();
+
+    const mode = screen.getByRole("button", { name: "Trace river", pressed: false });
+    await user.click(mode);
+    expect(mode).toHaveAttribute("aria-pressed", "true");
+    marker.focus();
+    await user.keyboard("{Enter}");
+    mapClick(marker);
+    expect(fetchTrace).not.toHaveBeenCalled();
+    const station = screen.getByRole("button", { name: "Trace from Shardlow" });
+    station.focus();
+    await user.keyboard("{Enter}");
+    expect(fetchTrace.mock.calls[0][0]).toBe(
+      "/api/river/trace?lon=-1.33536800&lat=52.86543100&direction=downstream",
+    );
+    expect(await screen.findByText(/downstream route incomplete/)).toBeInTheDocument();
+    expect(screen.getByText(/Snapped sample · 18 m away/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/test-network · 0123456789ab · Synthetic network attribution/),
+    ).toBeInTheDocument();
+    expect(currentTraceData()).toEqual({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: { kind: "selected" },
+          geometry: { type: "Point", coordinates: [-1.335368, 52.865431] },
+        },
+        {
+          type: "Feature",
+          properties: { kind: "snapped" },
+          geometry: { type: "Point", coordinates: [-1.32, 52.86] },
+        },
+        { type: "Feature", properties: {}, geometry },
+      ],
+    });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Direction" }), "upstream");
+    expect(fetchTrace.mock.calls[1][0]).toBe(
+      "/api/river/trace?lon=-1.33536800&lat=52.86543100&direction=upstream",
+    );
+    expect(await screen.findByText(/upstream route incomplete/)).toBeInTheDocument();
+    expect(mapMock.setData.mock.lastCall?.[0].features[2].geometry.type).toBe("LineString");
+    expect(mapMock.addSource).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Clear trace" }));
+    expect(mapMock.setData).toHaveBeenLastCalledWith({ type: "FeatureCollection", features: [] });
+    expect(screen.queryByText(/upstream route incomplete/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
+    await user.click(mode);
+    mapClick(map);
+    expect(fetchTrace).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores superseded responses and shows a failing trace without blocking discovery", async () => {
+    addPublishedPositions();
+    const user = userEvent.setup();
+    const fetchTrace = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchTrace);
+    let finishFirst!: (response: Response) => void;
+    fetchTrace.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishFirst = resolve;
+      }),
+    );
+    fetchTrace.mockResolvedValueOnce(new Response(null, { status: 504 }));
+    render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    await user.click(screen.getByText("Station map"));
+    await user.click(await screen.findByRole("button", { name: "Trace river" }));
+    mapClick(screen.getByRole("region", { name: "Station locations" }));
+    expect(fetchTrace.mock.calls[0][0]).toBe(
+      "/api/river/trace?lon=-1.25000000&lat=52.50000000&direction=downstream",
+    );
+    expect(screen.getByText("Tracing river…")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Kegworth" }));
+    expect(screen.getByRole("button", { name: "Trace from Kegworth" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Trace map centre" }));
+    expect(fetchTrace.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(await screen.findByText("River trace timed out")).toBeInTheDocument();
+    await act(async () =>
+      finishFirst(
+        Response.json({
+          data: { matchStatus: "NoMatch", release: traceRelease, route: null, geometry: null },
+        }),
+      ),
+    );
+    expect(screen.getByText("River trace timed out")).toBeInTheDocument();
+    expect(screen.queryByText("No river matched this point.")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Kegworth Water level" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["Ambiguous", null, /Several rivers could match/],
+    ["NoMatch", null, /No river matched/],
+    ["OutOfCoverage", null, /outside the river network coverage/],
+    ["Matched", { type: "MultiLineString", coordinates: [] }, /No route geometry to display/],
+    ["Matched", null, /No route geometry to display/],
+  ])(
+    "leaves the map without a route for %s when geometry is %j",
+    async (matchStatus, geometry, label) => {
+      addPublishedPositions();
+      const user = userEvent.setup();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          Response.json({
+            data: {
+              matchStatus,
+              release: traceRelease,
+              geometry,
+              snappedSample: null,
+              route: null,
+              attribution: null,
+            },
+          }),
+        ),
+      );
+      render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+      await user.click(screen.getByText("Station map"));
+      await user.click(await screen.findByRole("button", { name: "Trace river" }));
+      act(() => mapMock.events.dispatchEvent(new Event("load")));
+      mapClick(screen.getByRole("region", { name: "Station locations" }));
+      expect(await screen.findByText(label)).toBeInTheDocument();
+      expect(currentTraceData()?.features).toEqual([
+        {
+          type: "Feature",
+          properties: { kind: "selected" },
+          geometry: { type: "Point", coordinates: [-1.25, 52.5] },
+        },
+      ]);
+    },
+  );
 
   it("narrows results as the visitor types and announces the count", async () => {
     const user = userEvent.setup();
