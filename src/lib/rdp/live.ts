@@ -5,6 +5,7 @@ import { SignatureV4 } from "@smithy/signature-v4";
 import { getVercelOidcToken } from "@vercel/oidc";
 import type { LiveConfig } from "./config";
 import { RdpError } from "./errors";
+import { RIVER_LOCATE_PATH, RIVER_SAMPLE_PATH } from "./river-tracer";
 import { withDeadlineAndRetry, type RdpTransport } from "./transport";
 
 export type Credentials = {
@@ -130,9 +131,9 @@ export function createLiveTransport(
     }
   }
 
-  return async ({ path, query, timeoutMs }) => {
-    // Exactly the four observation routes; nothing that URL resolution could normalise elsewhere.
-    if (!OBSERVATION_PATH.test(path)) throw new RdpError("INVALID_QUERY");
+  return async ({ path, query, timeoutMs, maxResponseBytes }) => {
+    if (!OBSERVATION_PATH.test(path) && path !== RIVER_LOCATE_PATH && !RIVER_SAMPLE_PATH.test(path))
+      throw new RdpError("INVALID_QUERY");
     const url = new URL(base.toString());
     url.pathname = `${base.pathname}${path}`;
     if (url.pathname !== `${base.pathname}${path}` || url.host !== base.host)
@@ -164,7 +165,7 @@ export function createLiveTransport(
           signal,
         });
       },
-      { now: deps.now, random: deps.random, sleep: deps.sleep },
+      { now: deps.now, random: deps.random, sleep: deps.sleep, maxResponseBytes },
     );
   };
 }

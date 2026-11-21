@@ -175,14 +175,35 @@ describe("live signed transport", () => {
     });
   });
 
-  it.each(["/v1/cso/outfalls", "/v1/river/locate", "/v1/measurements/x/backfills"])(
-    "only signs the four observation routes, not %s",
-    async (path) => {
-      const { transport, fetch } = setup([]);
-      await expect(transport({ path, query: {}, timeoutMs: 1000 })).rejects.toMatchObject({
-        code: "INVALID_QUERY",
-      });
-      expect(fetch).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    "/v1/river/locate",
+    "/v1/river/releases/0123456789abcdef/basins/42/samples/123/upstream",
+    "/v1/river/releases/0123456789abcdef/basins/42/samples/123/downstream",
+  ])("signs %s using the existing role and response bounds", async (path) => {
+    const { transport, fetch } = setup([new Response('{"bounded":false}')]);
+    await expect(
+      transport({ path, query: {}, timeoutMs: 1000, maxResponseBytes: 8 }),
+    ).rejects.toMatchObject({ code: "RESPONSE_TOO_LARGE" });
+    expect(fetch).toHaveBeenCalledOnce();
+    const [url, init] = fetch.mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe(`/staging${path}`);
+    expect(init?.headers).toMatchObject({
+      authorization: expect.stringContaining("AWS4-HMAC-SHA256"),
+    });
+    expect(init).toMatchObject({ method: "GET", redirect: "error", cache: "no-store" });
+  });
+
+  it.each([
+    "/v1/cso/outfalls",
+    "/v1/measurements/x/backfills",
+    "/v1/river/upstream",
+    "/v1/river/releases/0123456789abcdef/basins/../samples/123/upstream",
+    "/v1/river/releases/0123456789abcdef/basins/42/samples/123/upstream-outfalls",
+  ])("refuses to sign %s", async (path) => {
+    const { transport, fetch } = setup([]);
+    await expect(transport({ path, query: {}, timeoutMs: 1000 })).rejects.toMatchObject({
+      code: "INVALID_QUERY",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });
