@@ -74,6 +74,20 @@ describe("measurement explorer", () => {
     expect(links()).toEqual(["Shardlow Water level"]);
   });
 
+  it("finds and displays a verified river once per station", async () => {
+    for (const { measurement } of items) {
+      if (measurement.name === "Shardlow") measurement.watercourseName = "River Trent";
+    }
+    const user = userEvent.setup();
+    render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    expect(screen.getByRole("heading", { name: "Stone" }).closest("li")).not.toHaveTextContent(
+      "River Trent",
+    );
+    await user.type(screen.getByRole("searchbox"), "river trent");
+    expect(screen.getAllByText("River Trent")).toHaveLength(1);
+    expect(links()).toEqual(["Shardlow Water level", "Shardlow Flow"]);
+  });
+
   it("shows an empty state with a way back when nothing matches", async () => {
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);

@@ -90,6 +90,13 @@ function Provenance({
           )}
         </Fact>
         <Fact term="Checked">{checkedAt ? <Time value={checkedAt} /> : notAvailable}</Fact>
+        {measurement.locationEvidence ? (
+          <Fact term="Station record">
+            <a className="link" href={measurement.locationEvidence}>
+              {measurement.source.label}
+            </a>
+          </Fact>
+        ) : null}
         <Fact term="Measurement ID">
           <code className="text-sm break-all">{measurement.measurementId}</code>
         </Fact>
@@ -222,8 +229,9 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
   const type = parameterLabel(measurement.parameter);
   const range = parseRange((await searchParams).range);
   const datum = datumSummary(measurement);
-  // Original unit and datum as RDP publishes them; a datum that does not apply is left out.
-  const summary = [measurement.unit, datum].filter(Boolean).join(" · ");
+  const summary = [measurement.watercourseName, measurement.unit, datum]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <PageMain>
       {back}

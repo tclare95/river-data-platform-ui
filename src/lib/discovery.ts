@@ -17,6 +17,7 @@ function haystack({ measurement }: OverviewItem): string {
   return fold(
     [
       measurement.name,
+      measurement.watercourseName,
       parameterLabel(measurement.parameter),
       measurement.parameter,
       measurement.source.label,
@@ -49,7 +50,12 @@ export function filterItems(items: readonly OverviewItem[], query: DiscoveryQuer
   });
 }
 
-export type StationGroup = { stationId: string; name: string; items: OverviewItem[] };
+export type StationGroup = {
+  stationId: string;
+  name: string;
+  watercourseName?: string;
+  items: OverviewItem[];
+};
 
 /**
  * Groups measurements under their RDP station, keeping catalogue order for stations and measurements. The heading is
@@ -58,8 +64,8 @@ export type StationGroup = { stationId: string; name: string; items: OverviewIte
 export function groupByStation(items: readonly OverviewItem[]): StationGroup[] {
   const groups = new Map<string, StationGroup>();
   for (const item of items) {
-    const { stationId, name } = item.measurement;
-    const group = groups.get(stationId) ?? { stationId, name, items: [] };
+    const { stationId, name, watercourseName } = item.measurement;
+    const group = groups.get(stationId) ?? { stationId, name, watercourseName, items: [] };
     group.items.push(item);
     groups.set(stationId, group);
   }

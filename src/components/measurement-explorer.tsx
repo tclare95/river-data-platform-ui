@@ -101,7 +101,7 @@ export function MeasurementExplorer({
             value={q}
             maxLength={MAX_QUERY_LENGTH}
             onChange={(event) => setQ(event.target.value)}
-            placeholder="Station name or measurement type"
+            placeholder="Station, river or measurement type"
             autoComplete="off"
             spellCheck={false}
             className="mt-1.5 block h-11 w-full max-w-copy rounded-md border border-line-input bg-surface px-3 text-base placeholder:text-ink-muted focus-visible:border-accent"
@@ -162,7 +162,7 @@ export function MeasurementExplorer({
               </Link>
             }
           >
-            Try a station name, or a type such as level, flow or rainfall.
+            Try a station, river or measurement type.
           </EmptyState>
         )}
       </div>

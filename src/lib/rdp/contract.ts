@@ -12,6 +12,29 @@ export type Freshness = "fresh" | "stale" | "unknown";
 export type Availability = "available" | "no_observations" | "unavailable";
 export type LabelConvention = "period_end" | "period_start" | "unverified";
 
+type StationWatercourse =
+  { status: "verified"; name: string } | { status: "not_applicable" | "not_published"; name: null };
+
+type StationLocation = {
+  evidence: string | null;
+  retrievedAt: string | null;
+} & (
+  | {
+      status: "verified";
+      latitude: number;
+      longitude: number;
+      crs: "EPSG:4326";
+      precisionMetres: 1 | 10 | 100 | 1000;
+    }
+  | {
+      status: "unknown" | "ambiguous";
+      latitude: null;
+      longitude: null;
+      crs: null;
+      precisionMetres: null;
+    }
+);
+
 type MeasurementBase = {
   measurementId: string;
   provider: string;
@@ -23,6 +46,8 @@ type MeasurementBase = {
   expectedIntervalSeconds: number;
   /** Station label from RDP's registry. */
   name: string;
+  watercourse?: StationWatercourse;
+  location?: StationLocation;
 };
 
 export type InstantMeasurement = MeasurementBase & { kind: "instantaneous" };
@@ -282,6 +307,67 @@ function envelope(body: unknown): { data: unknown; meta: Json } {
 // ---------------------------------------------------------------------------------------------------------
 // Catalogue
 
+/** Optional geography must not make an otherwise valid measurement unavailable. */
+function optionalGeography<T>(value: unknown, parse: (row: Json) => T): T | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return parse(object(value));
+  } catch (error) {
+    if (!(error instanceof RdpError)) throw error;
+    return undefined;
+  }
+}
+
+function parseWatercourse({ name, status }: Json): StationWatercourse {
+  if (status === "verified" && typeof name === "string" && name.trim()) {
+    return { status, name: string(name) };
+  }
+  if ((status === "not_applicable" || status === "not_published") && name === null) {
+    return { status, name };
+  }
+  return fail();
+}
+
+function parseLocation(row: Json): StationLocation {
+  const { status, crs, precisionMetres } = row;
+  const latitude = nullableFinite(row.latitude);
+  const longitude = nullableFinite(row.longitude);
+  const evidence = nullableString(row.evidence);
+  const retrievedAt = nullableTimestamp(row.retrievedAt);
+  if (evidence !== null && !URL.canParse(evidence)) fail();
+
+  if (status === "verified") {
+    if (
+      latitude === null ||
+      Math.abs(latitude) > 90 ||
+      longitude === null ||
+      Math.abs(longitude) > 180
+    )
+      fail();
+    if (
+      crs !== "EPSG:4326" ||
+      !(
+        precisionMetres === 1 ||
+        precisionMetres === 10 ||
+        precisionMetres === 100 ||
+        precisionMetres === 1000
+      )
+    )
+      fail();
+    return { status, latitude, longitude, crs, precisionMetres, evidence, retrievedAt };
+  }
+  if (
+    (status === "unknown" || status === "ambiguous") &&
+    latitude === null &&
+    longitude === null &&
+    crs === null &&
+    precisionMetres === null
+  ) {
+    return { status, latitude, longitude, crs, precisionMetres, evidence, retrievedAt };
+  }
+  return fail();
+}
+
 export function parseCatalogue(body: unknown): Catalogue {
   const { data, meta } = envelope(body);
   const seen = new Set<string>();
@@ -297,6 +383,8 @@ export function parseCatalogue(body: unknown): Catalogue {
       datum: string(row.datum),
       expectedIntervalSeconds: integer(row.expectedIntervalSeconds),
       name: string(row.name),
+      watercourse: optionalGeography(row.watercourse, parseWatercourse),
+      location: optionalGeography(row.location, parseLocation),
     };
     if (seen.has(base.measurementId) || base.expectedIntervalSeconds <= 0) fail();
     seen.add(base.measurementId);
