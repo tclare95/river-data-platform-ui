@@ -1,11 +1,51 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MeasurementExplorer } from "@/components/measurement-explorer";
 import { createRdpClient } from "@/lib/rdp/client";
 import { createFixtureTransport } from "@/lib/rdp/fixture";
 import type { OverviewItem } from "@/lib/overview";
 import { publicMeasurements, toPublicLatest, toPublicMeasurement } from "@/lib/rdp/public";
+
+const mapMock = vi.hoisted(() => ({
+  fail: false,
+  events: new EventTarget(),
+  setLngLat: vi.fn(),
+}));
+
+vi.mock("maplibre-gl", () => ({
+  setWorkerUrl: vi.fn(),
+  Map: class {
+    constructor(readonly options: { container: HTMLElement }) {
+      if (mapMock.fail) throw new Error("WebGL unavailable");
+    }
+    touchZoomRotate = { disableRotation: vi.fn() };
+    addControl = vi.fn();
+    fitBounds = vi.fn();
+    remove = vi.fn();
+    on = mapMock.events.addEventListener.bind(mapMock.events);
+    once = (name: string, handler: EventListener) =>
+      mapMock.events.addEventListener(name, handler, { once: true });
+  },
+  NavigationControl: class {},
+  LngLatBounds: class {
+    extend = vi.fn();
+  },
+  Marker: class {
+    constructor(readonly options: { element: HTMLElement }) {}
+    setLngLat(point: [number, number]) {
+      mapMock.setLngLat(point);
+      return this;
+    }
+    addTo(map: { options: { container: HTMLElement } }) {
+      map.options.container.append(this.options.element);
+      return this;
+    }
+    remove() {
+      this.options.element.remove();
+    }
+  },
+}));
 
 async function fixtureItems(): Promise<OverviewItem[]> {
   const rdp = createRdpClient({
@@ -28,6 +68,93 @@ describe("measurement explorer", () => {
   beforeEach(async () => {
     window.history.replaceState(null, "", "/");
     items = await fixtureItems();
+    mapMock.fail = false;
+    mapMock.events = new EventTarget();
+    mapMock.setLngLat.mockClear();
+  });
+
+  function addPublishedPositions() {
+    // Shardlow and Kegworth from the RDP #129 catalogue example.
+    for (const { measurement } of items) {
+      if (measurement.name === "Shardlow") {
+        measurement.position = { longitude: -1.335368, latitude: 52.865431, precisionMetres: 10 };
+        measurement.watercourseName = "River Trent";
+        measurement.locationEvidence =
+          "https://environment.data.gov.uk/flood-monitoring/id/stations/4007";
+      }
+      if (measurement.name === "Kegworth") {
+        measurement.position = { longitude: -1.273539, latitude: 52.831898, precisionMetres: 10 };
+        measurement.watercourseName = "River Soar";
+      }
+    }
+  }
+
+  it("keeps one marker per located station and updates selection with the list filters", async () => {
+    addPublishedPositions();
+    const user = userEvent.setup();
+    render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    expect(mapMock.setLngLat).not.toHaveBeenCalled();
+    await user.click(screen.getByText("Station map"));
+    const map = within(await screen.findByRole("region", { name: "Station locations" }));
+    const shardlow = await map.findByRole("button", { name: "Shardlow" });
+    expect(map.getAllByRole("button")).toHaveLength(2);
+    expect(mapMock.setLngLat).toHaveBeenCalledWith([-1.335368, 52.865431]);
+    expect(screen.getByRole("link", { name: "Stone Rainfall" })).toBeInTheDocument();
+
+    shardlow.focus();
+    await user.keyboard("{Enter}");
+    const details = within(document.getElementById(shardlow.getAttribute("aria-controls")!)!);
+    expect(details.getByRole("heading", { name: "Shardlow" })).toHaveFocus();
+    expect(details.getByText("River Trent")).toBeInTheDocument();
+    expect(details.getByText(/10 m resolution/)).toBeInTheDocument();
+    expect(details.getByRole("link", { name: "Water level" })).toHaveAttribute(
+      "href",
+      "/measurements/ea-shardlow-level",
+    );
+    expect(details.getByRole("link", { name: "Flow" })).toHaveAttribute(
+      "href",
+      "/measurements/ea-shardlow-flow",
+    );
+    expect(
+      details.getByRole("link", { name: "Environment Agency station record" }),
+    ).toHaveAttribute("href", "https://environment.data.gov.uk/flood-monitoring/id/stations/4007");
+    await user.tab();
+    expect(details.getByRole("link", { name: "Water level" })).toHaveFocus();
+
+    await user.click(screen.getByRole("radio", { name: "Flow" }));
+    expect(map.queryByRole("button", { name: "Kegworth" })).not.toBeInTheDocument();
+    expect(details.queryByRole("link", { name: "Water level" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Shardlow Water level" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: "All" }));
+    await user.type(screen.getByRole("searchbox"), "stone");
+    expect(screen.getByText("No matching stations have verified locations")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Station locations" })).not.toBeInTheDocument();
+    expect(links()).toEqual(["Stone Rainfall"]);
+  });
+
+  it.each(["WebGL", "tiles"])("keeps discovery usable when %s is unavailable", async (failure) => {
+    addPublishedPositions();
+    mapMock.fail = failure === "WebGL";
+    const user = userEvent.setup();
+    render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    await user.click(screen.getByText("Station map"));
+    if (failure === "tiles") {
+      const marker = await screen.findByRole("button", { name: "Shardlow" });
+      act(() => mapMock.events.dispatchEvent(new Event("error")));
+      expect(screen.getByText("Some basemap details could not load.")).toBeInTheDocument();
+      expect(marker).toBeInTheDocument();
+    } else {
+      expect(await screen.findByRole("alert")).toHaveTextContent("Station map unavailable");
+    }
+
+    await user.type(screen.getByRole("searchbox"), "kegw");
+    expect(screen.getByRole("link", { name: "Kegworth Water level" })).toHaveAttribute(
+      "href",
+      "/measurements/ea-kegworth-level",
+    );
+    expect(screen.queryByRole("link", { name: "Shardlow Flow" })).not.toBeInTheDocument();
   });
 
   it("narrows results as the visitor types and announces the count", async () => {

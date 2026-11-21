@@ -18,7 +18,7 @@ Consult current code/contracts in RDP before making integration assumptions.
 - The UI **may have its own Next.js application API** for UI-specific operations, access checks or browser-facing bounded data responses. This is _not_ a generic upstream proxy or a new canonical backend.
 - Access the AWS_IAM/SigV4 RDP read service **server-side only**, using dedicated Vercel-project OIDC → STS → read-only role. No browser AWS credentials, private API hostnames, archive access or `NEXT_PUBLIC_` server secrets.
 - Reuse published measurement IDs, units, timestamps, quality, datum, provenance, freshness and coverage semantics. Do not invent locations, live values, continuous data or new domain rules.
-- The RDP measurement catalogue does not yet guarantee river/geolocation metadata; see [RDP #129](https://github.com/tclare95/river-data-platform/issues/129). Make discovery usable as a list without a map.
+- The RDP measurement catalogue provides optional verified geography; see [RDP #129](https://github.com/tclare95/river-data-platform/issues/129). Make discovery usable as a list without a map.
 - Never modify isHPPOpen production behaviour, RDP ingestion/selection or canonical observations from this repository.
 - User accounts, alerts, playgrounds, custom datasets, developer APIs and model execution are deferred.
 
