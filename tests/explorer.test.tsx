@@ -15,6 +15,7 @@ const mapMock = vi.hoisted(() => ({
   setLngLat: vi.fn(),
   setData: vi.fn(),
   addSource: vi.fn(),
+  addLayer: vi.fn(),
 }));
 
 vi.mock("maplibre-gl", () => ({
@@ -35,7 +36,7 @@ vi.mock("maplibre-gl", () => ({
       mapMock.events.addEventListener(name, handler, { once: true });
     getContainer = () => this.options.container;
     getCenter = () => ({ wrap: () => ({ lng: -1.3, lat: 52.8 }) });
-    addLayer = vi.fn();
+    addLayer = mapMock.addLayer;
     addSource = mapMock.addSource;
     getSource = () =>
       mapMock.addSource.mock.calls.length ? { setData: mapMock.setData } : undefined;
@@ -92,6 +93,40 @@ function mapClick(target: HTMLElement, lng = -1.25, lat = 52.5) {
 const traceRelease = { releaseId: "test-network", version: "0123456789abcdef".repeat(4) };
 const currentTraceData = () =>
   mapMock.setData.mock.lastCall?.[0] ?? mapMock.addSource.mock.lastCall?.[1].data;
+const traceKinds = () =>
+  currentTraceData()?.features.map(
+    (feature: { properties: { kind: string } }) => feature.properties.kind,
+  );
+const traceLine = {
+  type: "LineString",
+  coordinates: [
+    [-1.32, 52.86],
+    [-1.3, 52.88],
+  ],
+};
+const polygon = [
+  [
+    [-1.32, 52.86],
+    [-1.2, 52.8],
+    [-1.3, 52.7],
+    [-1.32, 52.86],
+  ],
+];
+const publishedCatchment = {
+  status: "published",
+  geometry: { type: "Polygon", coordinates: polygon },
+  areaKm2: 12.5,
+  pourPointOffsetM: 25.5,
+  sourceNetworkRelease: "ORN v2.0 GeoPackage (2025-03)",
+};
+const matchedTrace = (direction: string) => ({
+  matchStatus: "Matched",
+  release: traceRelease,
+  snappedSample: { position: [-1.32, 52.86], snapOffsetM: 18 },
+  route: { direction, completeness: "incomplete" },
+  geometry: traceLine,
+  attribution: "Synthetic network attribution",
+});
 
 describe("measurement explorer", () => {
   let items: OverviewItem[];
@@ -105,6 +140,7 @@ describe("measurement explorer", () => {
     mapMock.setLngLat.mockClear();
     mapMock.setData.mockClear();
     mapMock.addSource.mockClear();
+    mapMock.addLayer.mockClear();
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -375,7 +411,7 @@ describe("measurement explorer", () => {
           properties: { kind: "snapped" },
           geometry: { type: "Point", coordinates: [-1.32, 52.86] },
         },
-        { type: "Feature", properties: {}, geometry },
+        { type: "Feature", properties: { kind: "downstream" }, geometry },
       ],
     });
 
@@ -396,6 +432,179 @@ describe("measurement explorer", () => {
     expect(map).toHaveClass("maplibregl-map");
     mapClick(map);
     expect(fetchTrace).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["Polygon", polygon, 0],
+    ["MultiPolygon", [polygon], 25.5],
+  ])(
+    "toggles a %s separately from both traced directions and preserves the comparison",
+    async (type, coordinates, pourPointOffsetM) => {
+      addPublishedPositions();
+      const user = userEvent.setup();
+      const geometry = { type, coordinates };
+      const fetchTrace = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(Response.json({ data: matchedTrace("downstream") }))
+        .mockResolvedValueOnce(
+          Response.json({
+            data: {
+              ...matchedTrace("upstream"),
+              catchment: { ...publishedCatchment, geometry, pourPointOffsetM },
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            data: { ...matchedTrace("upstream"), catchment: publishedCatchment },
+          }),
+        );
+      vi.stubGlobal("fetch", fetchTrace);
+      render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+      await user.click(await screen.findByRole("button", { name: "Shardlow" }));
+      act(() => mapMock.events.dispatchEvent(new Event("load")));
+      const details = within(
+        document.getElementById(
+          screen.getByRole("button", { name: "Shardlow" }).getAttribute("aria-controls")!,
+        )!,
+      );
+      for (const button of details.getAllByRole("button", { name: /^Add to comparison/ })) {
+        await user.click(button);
+      }
+      const compare = screen.getByRole("link", { name: "Compare selected measurements" });
+      const comparisonUrl = compare.getAttribute("href");
+      await user.click(screen.getByRole("button", { name: "Trace river" }));
+      const map = screen.getByRole("region", { name: "Station locations" });
+      mapClick(map);
+      expect(await screen.findByRole("checkbox", { name: "Downstream route" })).toBeChecked();
+      const direction = screen.getByRole("combobox", { name: "Direction" });
+      await user.selectOptions(direction, "upstream");
+      const show = await screen.findByRole("button", { name: "Show catchment" });
+      expect(traceKinds()).toEqual(["selected", "snapped", "upstream", "downstream"]);
+      await user.click(show);
+      expect(currentTraceData().features).toContainEqual({
+        type: "Feature",
+        properties: { kind: "catchment" },
+        geometry,
+      });
+      expect(mapMock.addLayer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "fill",
+          source: "river-trace",
+          filter: ["==", ["get", "kind"], "catchment"],
+          paint: expect.objectContaining({ "fill-opacity": 0.15 }),
+        }),
+      );
+      expect(mapMock.addLayer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "line",
+          source: "river-trace",
+          filter: ["==", ["get", "kind"], "catchment"],
+          paint: expect.objectContaining({ "line-dasharray": [3, 2] }),
+        }),
+      );
+      expect(screen.getByText("Catchment area 12.5 km²")).toBeInTheDocument();
+      expect(screen.getByText(/ORN v2.0 GeoPackage/)).toBeInTheDocument();
+      expect(screen.getByText(/separate river-network evidence/)).toBeInTheDocument();
+      if (pourPointOffsetM) {
+        expect(
+          screen.getByText(/25.5 m downstream of the snapped river sample/),
+        ).toBeInTheDocument();
+        expect(traceKinds()).not.toContain("pour-point");
+      } else {
+        expect(
+          screen.getByText(/Catchment pour point · at the snapped sample/),
+        ).toBeInTheDocument();
+        expect(currentTraceData().features).toContainEqual({
+          type: "Feature",
+          properties: { kind: "pour-point" },
+          geometry: { type: "Point", coordinates: [-1.32, 52.86] },
+        });
+      }
+      const upstream = screen.getByRole("checkbox", { name: "Upstream reaches" });
+      const downstream = screen.getByRole("checkbox", { name: "Downstream route" });
+      await user.click(upstream);
+      expect(traceKinds()).not.toContain("upstream");
+      expect(traceKinds()).toContain("downstream");
+      await user.click(downstream);
+      expect(traceKinds()).not.toContain("downstream");
+      expect(traceKinds()).toContain("catchment");
+      await user.click(upstream);
+      await user.click(screen.getByRole("button", { name: "Hide catchment" }));
+      expect(traceKinds()).toEqual(["selected", "snapped", "upstream"]);
+      await user.click(screen.getByRole("button", { name: "Show catchment" }));
+      await user.selectOptions(direction, "downstream");
+      expect(traceKinds()).toContain("catchment");
+      expect(downstream).not.toBeChecked();
+      expect(fetchTrace).toHaveBeenCalledTimes(2);
+      await user.click(screen.getByRole("button", { name: "Clear trace" }));
+      expect(traceKinds()).toEqual([]);
+      expect(details.getByRole("heading", { name: "Shardlow" })).toBeInTheDocument();
+      expect(compare).toHaveAttribute("href", comparisonUrl);
+
+      await user.selectOptions(direction, "upstream");
+      mapClick(map, -1.2, 52.6);
+      expect(await screen.findByRole("button", { name: "Show catchment" })).toBeInTheDocument();
+      expect(traceKinds()).toEqual(["selected", "snapped", "upstream"]);
+    },
+  );
+
+  it.each([
+    [
+      "unmatched",
+      { matchStatus: "NoMatch", route: null, snappedSample: null, geometry: null, catchment: null },
+      /No river matched/,
+    ],
+    [
+      "unavailable",
+      { catchment: { ...publishedCatchment, status: "unavailable", geometry: null } },
+      /Catchment boundary unavailable/,
+    ],
+    [
+      "not loaded",
+      { catchment: { ...publishedCatchment, status: "not-loaded", geometry: null } },
+      /Catchment boundary unavailable/,
+    ],
+    [
+      "invalid geometry withheld",
+      { catchment: { ...publishedCatchment, geometry: null } },
+      /Catchment boundary unavailable/,
+    ],
+    [
+      "unapproved source withheld",
+      { catchment: { ...publishedCatchment, geometry: null, sourceNetworkRelease: null } },
+      /Catchment boundary unavailable/,
+    ],
+    ["oversized", null, /River trace is too large to display/],
+  ])("offers no catchment when the result is %s", async (scenario, data, message) => {
+    addPublishedPositions();
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(Response.json({ data: matchedTrace("downstream") }))
+        .mockResolvedValueOnce(
+          data
+            ? Response.json({ data: { ...matchedTrace("upstream"), ...data } })
+            : new Response(null, { status: 413 }),
+        ),
+    );
+    render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    await user.click(await screen.findByRole("button", { name: "Trace river" }));
+    act(() => mapMock.events.dispatchEvent(new Event("load")));
+    mapClick(screen.getByRole("region", { name: "Station locations" }));
+    await screen.findByRole("checkbox", { name: "Downstream route" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Direction" }), "upstream");
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show catchment" })).not.toBeInTheDocument();
+    if (scenario === "unmatched") {
+      expect(traceKinds()).toEqual(["selected"]);
+    } else {
+      expect(traceKinds()).toContain("downstream");
+      expect(screen.getByText(/Synthetic network attribution/)).toBeInTheDocument();
+    }
+    expect(traceKinds()).not.toContain("catchment");
   });
 
   it("ignores superseded responses and shows a failing trace without blocking discovery", async () => {
