@@ -8,6 +8,7 @@
  */
 import { RdpError } from "./errors";
 import type { RdpTransport } from "./transport";
+import { UPSTREAM_MEASUREMENTS_PATH } from "./upstream-measurements";
 
 const QUARTER_HOUR = 15 * 60 * 1000;
 
@@ -369,6 +370,8 @@ function history(measure: FixtureMeasure, query: Readonly<Record<string, string>
 export function createFixtureTransport(now: () => number = Date.now): RdpTransport {
   return async ({ path, query }) => {
     const at = now();
+    if (path === UPSTREAM_MEASUREMENTS_PATH)
+      throw new RdpError("CATCHMENT_DISCOVERY_DISABLED", 404);
     if (path === "/v1/measurements") {
       return {
         // Fresh copies: a caller mutating the response must never alter the fixture registry.

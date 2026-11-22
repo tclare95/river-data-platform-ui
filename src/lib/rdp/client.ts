@@ -25,7 +25,15 @@ import {
   type RiverLocation,
   type RiverRoute,
 } from "./river-tracer";
-import type { RdpRequest, RdpTransport } from "./transport";
+import { waitForRdp, type RdpRequest, type RdpTransport } from "./transport";
+import {
+  isRiverReleaseToken,
+  MAX_UPSTREAM_MEASUREMENTS_BYTES,
+  parseUpstreamMeasurements,
+  UPSTREAM_MEASUREMENTS_PATH,
+  type UpstreamMeasurementQuery,
+  type UpstreamMeasurements,
+} from "./upstream-measurements";
 
 /** RDP's own bounds (READ-API.md). UI routes apply smaller defaults on top. */
 export const RDP_LIMITS = Object.freeze({
@@ -67,6 +75,10 @@ export type RdpClient = {
   getHealth(id: string): Promise<Health>;
   getHistory(id: string, query: HistoryQuery): Promise<HistoryPage>;
   locateRiver(lon: string, lat: string): Promise<RiverLocation>;
+  getUpstreamMeasurements(
+    query: UpstreamMeasurementQuery,
+    signal?: AbortSignal,
+  ): Promise<UpstreamMeasurements>;
   getRiverRoute(
     location: RiverLocation,
     direction: RiverDirection,
@@ -146,29 +158,40 @@ export function createLimiter(options: LimiterOptions) {
     }
   }
 
-  return async function limit<T>(run: () => Promise<T>): Promise<T> {
+  return async function limit<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (signal?.aborted) throw new RdpError("TIMEOUT");
     const deadline = now() + options.maxWaitMs;
     if (active >= options.maxConcurrent) {
       if (queue.length >= options.maxQueued) throw new RdpError("THROTTLED");
       await new Promise<void>((resolve, reject) => {
+        const remove = (code: "THROTTLED" | "TIMEOUT") => {
+          clearTimeout(waiter.timer);
+          queue.splice(queue.indexOf(waiter), 1);
+          signal?.removeEventListener("abort", onAbort);
+          reject(new RdpError(code));
+        };
+        const onAbort = () => remove("TIMEOUT");
         const waiter = {
-          resolve,
-          timer: setTimeout(() => {
-            queue.splice(queue.indexOf(waiter), 1);
-            reject(new RdpError("THROTTLED"));
-          }, options.maxWaitMs),
+          resolve: () => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+          },
+          timer: setTimeout(() => remove("THROTTLED"), options.maxWaitMs),
         };
         queue.push(waiter);
+        signal?.addEventListener("abort", onAbort, { once: true });
       });
     } else {
       active++;
     }
     try {
+      if (signal?.aborted) throw new RdpError("TIMEOUT");
       let waited = 0;
       for (let wait = waitForToken(); wait > 0; wait = waitForToken()) {
         waited += wait;
         if (now() + wait > deadline || waited > options.maxWaitMs) throw new RdpError("THROTTLED");
-        await sleep(wait);
+        if (signal) await waitForRdp(() => sleep(wait), signal);
+        else await sleep(wait);
       }
       return await run();
     } finally {
@@ -227,10 +250,12 @@ export function createRdpClient(options: ClientOptions): RdpClient {
     parse: (body: unknown) => T,
   ): Promise<T> {
     try {
-      return parse(await limit(() => options.transport(request)));
+      const body = await limit(() => options.transport(request), request.signal);
+      if (request.signal?.aborted) throw new RdpError("TIMEOUT");
+      return parse(body);
     } catch (error) {
       const failure = error instanceof RdpError ? error : new RdpError("UPSTREAM_ERROR");
-      log({ route, code: failure.code, status: failure.status });
+      if (!request.signal?.aborted) log({ route, code: failure.code, status: failure.status });
       // RDP unpublished something our cached catalogue still lists: re-read the catalogue next time.
       if (failure.code === "MEASUREMENT_NOT_FOUND") catalogueCache.clear();
       throw failure;
@@ -260,6 +285,37 @@ export function createRdpClient(options: ClientOptions): RdpClient {
       },
       parseRiverLocation,
     );
+  }
+
+  async function getUpstreamMeasurements(
+    query: UpstreamMeasurementQuery,
+    signal?: AbortSignal,
+  ): Promise<UpstreamMeasurements> {
+    const { lon, lat, release } = query;
+    if (
+      !isRiverCoordinate(lon, 180) ||
+      !isRiverCoordinate(lat, 90) ||
+      (release !== undefined && !isRiverReleaseToken(release))
+    )
+      throw new RdpError("INVALID_QUERY");
+    try {
+      return await call(
+        UPSTREAM_MEASUREMENTS_PATH,
+        {
+          path: UPSTREAM_MEASUREMENTS_PATH,
+          query: release === undefined ? { lon, lat } : { lon, lat, release },
+          timeoutMs: TIMEOUT_MS.history,
+          maxResponseBytes: MAX_UPSTREAM_MEASUREMENTS_BYTES,
+          signal,
+        },
+        (body) => parseUpstreamMeasurements(body, { lon, lat, release }),
+      );
+    } catch (error) {
+      // Only the ReadApi 404 envelope is evidence that the discovery route is disabled.
+      if (error instanceof RdpError && error.status === 404 && error.code === "CONFIGURATION_ERROR")
+        throw new RdpError("CATCHMENT_DISCOVERY_DISABLED", 404);
+      throw error;
+    }
   }
 
   async function getRiverRoute(
@@ -404,6 +460,7 @@ export function createRdpClient(options: ClientOptions): RdpClient {
     getHealth,
     getHistory,
     locateRiver,
+    getUpstreamMeasurements,
     getRiverRoute,
   });
 }

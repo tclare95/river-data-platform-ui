@@ -6,7 +6,8 @@ import { getVercelOidcToken } from "@vercel/oidc";
 import type { LiveConfig } from "./config";
 import { RdpError } from "./errors";
 import { RIVER_LOCATE_PATH, RIVER_SAMPLE_PATH } from "./river-tracer";
-import { withDeadlineAndRetry, type RdpTransport } from "./transport";
+import { waitForRdp, withDeadlineAndRetry, type RdpTransport } from "./transport";
+import { UPSTREAM_MEASUREMENTS_PATH } from "./upstream-measurements";
 
 export type Credentials = {
   accessKeyId: string;
@@ -110,29 +111,23 @@ export function createLiveTransport(
       }
     })();
     const exchange = pending;
-    let onAbort: (() => void) | undefined;
-    const aborted = new Promise<never>((_resolve, reject) => {
-      onAbort = () => reject(new RdpError("TIMEOUT"));
-      if (signal.aborted) onAbort();
-      else signal.addEventListener("abort", onAbort, { once: true });
-    });
     try {
-      return await Promise.race([exchange, aborted]);
+      return await waitForRdp(() => exchange, signal);
     } catch (error) {
       if (signal.aborted || (error instanceof RdpError && error.code === "TIMEOUT")) {
         throw new RdpError("TIMEOUT");
       }
       throw new RdpError("AUTHENTICATION_FAILED");
-    } finally {
-      signal.removeEventListener("abort", onAbort!);
-      // The shared exchange may still reject later; that outcome belongs to whoever is still waiting.
-      exchange.catch(() => undefined);
-      aborted.catch(() => undefined);
     }
   }
 
-  return async ({ path, query, timeoutMs, maxResponseBytes }) => {
-    if (!OBSERVATION_PATH.test(path) && path !== RIVER_LOCATE_PATH && !RIVER_SAMPLE_PATH.test(path))
+  return async ({ path, query, timeoutMs, maxResponseBytes, signal }) => {
+    if (
+      !OBSERVATION_PATH.test(path) &&
+      path !== RIVER_LOCATE_PATH &&
+      path !== UPSTREAM_MEASUREMENTS_PATH &&
+      !RIVER_SAMPLE_PATH.test(path)
+    )
       throw new RdpError("INVALID_QUERY");
     const url = new URL(base.toString());
     url.pathname = `${base.pathname}${path}`;
@@ -165,7 +160,7 @@ export function createLiveTransport(
           signal,
         });
       },
-      { now: deps.now, random: deps.random, sleep: deps.sleep, maxResponseBytes },
+      { now: deps.now, random: deps.random, sleep: deps.sleep, maxResponseBytes, signal },
     );
   };
 }

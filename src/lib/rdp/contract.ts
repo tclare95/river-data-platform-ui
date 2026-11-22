@@ -228,21 +228,21 @@ export type HistoryPage = InstantHistoryPage | PeriodTotalHistoryPage;
 
 type Json = Record<string, unknown>;
 
-function fail(): never {
+export function fail(): never {
   throw new RdpError("RESPONSE_CONTRACT_ERROR");
 }
 
-function object(value: unknown): Json {
+export function object(value: unknown): Json {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Json)
     : fail();
 }
 
-function array(value: unknown, max: number): unknown[] {
+export function array(value: unknown, max: number): unknown[] {
   return Array.isArray(value) && value.length <= max ? value : fail();
 }
 
-function string(value: unknown): string {
+export function string(value: unknown): string {
   return typeof value === "string" && value.length > 0 && value.length <= 2048 ? value : fail();
 }
 
@@ -250,11 +250,11 @@ function nullable<T>(read: (value: unknown) => T) {
   return (value: unknown): T | null => (value === null ? null : read(value));
 }
 
-function finite(value: unknown): number {
+export function finite(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fail();
 }
 
-function integer(value: unknown): number {
+export function integer(value: unknown): number {
   return Number.isSafeInteger(value) ? (value as number) : fail();
 }
 
@@ -262,7 +262,7 @@ function boolean(value: unknown): boolean {
   return typeof value === "boolean" ? value : fail();
 }
 
-function oneOf<const T extends readonly string[]>(options: T) {
+export function oneOf<const T extends readonly string[]>(options: T) {
   return (value: unknown): T[number] =>
     typeof value === "string" && options.includes(value) ? (value as T[number]) : fail();
 }
@@ -277,7 +277,7 @@ export function epochMs(timestamp: string): number {
   return Date.parse(timestamp.replace(/(\.\d{3})\d+Z$/, "$1Z"));
 }
 
-function timestamp(value: unknown): string {
+export function timestamp(value: unknown): string {
   return typeof value === "string" && Number.isFinite(epochMs(value)) ? value : fail();
 }
 
@@ -292,7 +292,7 @@ const persistenceState = oneOf(["unknown", "successful", "failed"] as const);
 
 const MEASUREMENT_ID = /^[a-z0-9][a-z0-9-]{0,79}$/;
 export function isMeasurementId(value: unknown): value is string {
-  return typeof value === "string" && MEASUREMENT_ID.test(value);
+  return typeof value === "string" && value.trim() === value && MEASUREMENT_ID.test(value);
 }
 
 function measurementId(value: unknown): string {
@@ -328,7 +328,7 @@ function parseWatercourse({ name, status }: Json): StationWatercourse {
   return fail();
 }
 
-function parseLocation(row: Json): StationLocation {
+export function parseLocation(row: Json): StationLocation {
   const { status, crs, precisionMetres } = row;
   const latitude = nullableFinite(row.latitude);
   const longitude = nullableFinite(row.longitude);
