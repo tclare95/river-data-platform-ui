@@ -15,6 +15,7 @@ import {
   readCompareQuery,
 } from "@/lib/compare";
 import { loadComparable } from "@/lib/compare-load";
+import { DEFAULT_RANGE } from "@/lib/history/range";
 import { parameterLabel } from "@/lib/labels";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
@@ -82,7 +83,9 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
     <PageMain>
       <PageHeader title="Compare measurements" />
       <Link
-        href={ids.length ? `/?${compareParams(ids)}` : "/"}
+        href={
+          ids.length ? `/?${compareParams(ids, range === DEFAULT_RANGE ? undefined : range)}` : "/"
+        }
         prefetch={false}
         className="link mt-2 inline-flex min-h-10 items-center"
       >
