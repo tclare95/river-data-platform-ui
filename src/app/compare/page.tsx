@@ -8,9 +8,10 @@ import { Attribution, FixtureNote } from "@/components/provenance";
 import { EmptyState, ErrorState } from "@/components/states";
 import {
   COMPARE_SLOTS,
-  MAX_COMPARE_AXES,
   compareHref,
-  comparisonAxes,
+  compareParams,
+  comparisonLabel,
+  needsMoreCompareAxes,
   readCompareQuery,
 } from "@/lib/compare";
 import { loadComparable } from "@/lib/compare-load";
@@ -18,10 +19,6 @@ import { parameterLabel } from "@/lib/labels";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
 export const metadata: Metadata = { title: "Compare" };
-
-function optionLabel(measurement: PublicMeasurement) {
-  return `${measurement.name} · ${parameterLabel(measurement.parameter)} (${measurement.unit})`;
-}
 
 const ERROR_ID = "compare-error";
 
@@ -61,14 +58,12 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
   });
   const ids = selected.map(({ measurementId }) => measurementId);
   const { range } = query;
-  const tooManyAxes = (measurements: PublicMeasurement[]) =>
-    comparisonAxes(measurements, (item) => item).length > MAX_COMPARE_AXES;
   const error =
     query.repeated || selected.length < uniqueIds.size
       ? "One of those measurements isn’t available to compare. Choose another."
       : selected.length < query.ids.length
         ? "Choose different measurements."
-        : tooManyAxes(selected)
+        : needsMoreCompareAxes(selected)
           ? "These measurements need more than two separate axes because of their types, units, level datums or rainfall periods. Remove a measurement to compare them."
           : null;
   const ready = selected.length >= 2 && !error;
@@ -76,7 +71,7 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
     .filter(({ measurementId }) => !ids.includes(measurementId))
     .map((measurement) => ({
       measurement,
-      incompatible: tooManyAxes([...selected, measurement]),
+      incompatible: needsMoreCompareAxes([...selected, measurement]),
     }));
   const hasIncompatible = candidates.some(({ incompatible }) => incompatible);
   const canAdd = candidates.some(({ incompatible }) => !incompatible);
@@ -86,6 +81,13 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
   return (
     <PageMain>
       <PageHeader title="Compare measurements" />
+      <Link
+        href={ids.length ? `/?${compareParams(ids)}` : "/"}
+        prefetch={false}
+        className="link mt-2 inline-flex min-h-10 items-center"
+      >
+        Back to explorer
+      </Link>
       {catalogue.mode === "fixture" ? <FixtureNote className="mt-4" /> : null}
 
       {options.length < 2 ? (
@@ -99,14 +101,14 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
                   key={measurement.measurementId}
                   className="flex items-center gap-2 rounded-md border border-line bg-surface px-3 text-sm"
                 >
-                  {optionLabel(measurement)}
+                  {comparisonLabel(measurement)}
                   <Link
                     href={compareHref(
                       ids.filter((_, i) => i !== index),
                       range,
                     )}
                     prefetch={false}
-                    aria-label={`Remove ${optionLabel(measurement)}`}
+                    aria-label={`Remove ${comparisonLabel(measurement)}`}
                     className="link inline-flex min-h-11 items-center"
                   >
                     Remove
@@ -152,7 +154,7 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
                       value={measurement.measurementId}
                       disabled={incompatible}
                     >
-                      {optionLabel(measurement)}
+                      {comparisonLabel(measurement)}
                       {incompatible ? " · Needs a third axis" : ""}
                     </option>
                   ))}

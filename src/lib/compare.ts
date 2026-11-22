@@ -1,29 +1,49 @@
 import type { HistoryResult, PublicObservation } from "@/lib/history/load";
 import type { RainfallInterval } from "@/lib/history/rainfall";
 import { parseRange, type HistoryRange } from "@/lib/history/range";
+import { formatPeriod } from "@/lib/format";
+import { parameterLabel } from "@/lib/labels";
 import { tickKey } from "@/lib/rdp/contract";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
 export const COMPARE_SLOTS = ["a", "b", "c", "d"] as const;
 export const MAX_COMPARE_AXES = 2;
 
-export function readCompareQuery(params: Record<string, string | string[] | undefined>) {
-  const values = COMPARE_SLOTS.map((slot) => params[slot]);
+export function readCompareQuery(
+  params: Record<string, string | string[] | undefined> | URLSearchParams,
+) {
+  const get = (name: string) => {
+    if (!(params instanceof URLSearchParams)) return params[name];
+    const values = params.getAll(name);
+    return values.length > 1 ? values : values[0];
+  };
+  const values = COMPARE_SLOTS.map(get);
   return {
     ids: values.filter((value): value is string => typeof value === "string" && value !== ""),
     repeated: values.some(Array.isArray),
-    range: parseRange(params.range),
+    range: parseRange(get("range")),
   };
 }
 
-export function compareHref(ids: readonly string[] = [], range?: HistoryRange) {
+export function compareParams(ids: readonly string[], range?: HistoryRange) {
   const params = new URLSearchParams();
   COMPARE_SLOTS.forEach((slot, index) => {
     if (ids[index]) params.set(slot, ids[index]);
   });
   if (range) params.set("range", range);
-  const search = params.toString();
+  return params;
+}
+
+export function compareHref(ids: readonly string[] = [], range?: HistoryRange) {
+  const search = compareParams(ids, range).toString();
   return search ? `/compare?${search}` : "/compare";
+}
+
+export function comparisonLabel(measurement: PublicMeasurement) {
+  const { name, parameter, unit, kind, periodSeconds } = measurement;
+  const scale =
+    kind === "period_total" && periodSeconds ? `${unit} per ${formatPeriod(periodSeconds)}` : unit;
+  return `${name} · ${parameterLabel(parameter)} (${scale})`;
 }
 
 /**
@@ -51,6 +71,10 @@ export function comparisonAxes<T>(
     else axes.push([item]);
   }
   return axes;
+}
+
+export function needsMoreCompareAxes(measurements: readonly PublicMeasurement[]) {
+  return comparisonAxes(measurements, (item) => item).length > MAX_COMPARE_AXES;
 }
 
 export type ComparisonReading = PublicObservation | RainfallInterval;

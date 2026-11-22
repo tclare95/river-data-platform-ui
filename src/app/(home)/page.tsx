@@ -4,6 +4,7 @@ import { MeasurementExplorer } from "@/components/measurement-explorer";
 import { PageHeader } from "@/components/page-header";
 import { Attribution, FixtureNote } from "@/components/provenance";
 import { EmptyState, ErrorState } from "@/components/states";
+import { readCompareQuery } from "@/lib/compare";
 import { readQuery } from "@/lib/discovery";
 import { loadOverview } from "@/lib/overview";
 
@@ -24,7 +25,11 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
         ) : (
           <>
             {overview.mode === "fixture" ? <FixtureNote className="mb-6" /> : null}
-            <MeasurementExplorer items={overview.items} initialQuery={readQuery(params)} />
+            <MeasurementExplorer
+              items={overview.items}
+              initialQuery={readQuery(params)}
+              initialComparison={readCompareQuery(params)}
+            />
             <Attribution measurements={overview.items.map((item) => item.measurement)} />
           </>
         )}
