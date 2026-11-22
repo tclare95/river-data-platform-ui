@@ -87,7 +87,7 @@ tracer path in the Vercel Firewall rate-limit rule before enabling live traffic.
 
 The station map's opt-in Trace river mode calls this application endpoint from a map point or a verified station
 position. Station markers still open station details. One MapLibre source displays the selected point, any published
-snapped sample, independently toggled upstream and downstream reaches, and an opt-in catchment. Directions are
+snapped sample, independently toggled upstream and downstream reaches, and a toggleable catchment. Directions are
 loaded on demand for the current point and only combined within the same release. Changing the trace point or
 direction cancels the previous browser request. A zero-offset pour point shares the snapped sample's coordinates.
 For a downstream offset, the map describes where the published sample lies along the river because the public
@@ -98,6 +98,10 @@ UI role and that role's `--ui --river` caller policy applied before a signed smo
 environment. See the [RDP rollout instructions](https://github.com/tclare95/river-data-platform/blob/main/docs/PRODUCTION-READ-API.md#rdp-ui-caller).
 
 ### Catchment measurement discovery
+
+River Tracer starts upstream and displays the published catchment when available. The contextual
+measurement list and verified station highlights load on request, independently of catalogue search
+filters. Both use the shared comparison selection and its existing compatibility rules.
 
 `GET /api/river/upstream-measurements?lon=&lat=&release=` takes one WGS84 point and an optional
 16-character lowercase hex token. Pass the first 16 characters of the displayed River Tracer release
@@ -165,7 +169,7 @@ counts. The fixture suite uses synthetic RDP responses and does not depend on th
 
 - **Home** (`src/app/(home)/`): the public catalogue with RDP's latest state, grouped by RDP `stationId`. The home page waits for the catalogue so the station list is visible in the initial HTML without a streaming reveal script. Search and the type filter are pure functions over the already-loaded catalogue (`src/lib/discovery.ts`) in one client component; the view is mirrored in `?q=&type=` with `history.replaceState` and also works as a plain GET form without JavaScript. Search covers station name, verified watercourse, parameter, provider, unit and ID. The type filter appears only when more than one type is published.
 - **Station map** — The map loads MapLibre in the browser when there are matching verified catalogue positions. Initial bounds fit those stations, and subsequent filters update markers without changing the viewport. Selecting a marker reveals the station's published measurements, provider position resolution and public station record where available. The browser requests the attributed [OpenFreeMap Positron basemap](https://openfreemap.org/quick_start/) directly. Basemap errors leave markers usable. The station list includes unlocated stations and works independently of JavaScript, WebGL and tiles.
-- **Explorer comparison** — The map and station list add to one selection using the comparison page's two-axis rules. The explorer keeps the ordered `a`–`d` slots alongside its search filters, links to the existing `/compare` chart, and restores selections from the return link or browser Back. River Tracer mode hides comparison actions from map station details.
+- **Explorer comparison** — The map and station list add to one selection using the comparison page's two-axis rules. The explorer keeps the ordered `a`–`d` slots alongside its search filters, links to the existing `/compare` chart, and restores selections from the return link or browser Back. In River Tracer mode the catchment list and its highlighted markers offer the same comparison actions.
 - **Detail** (`/measurements/{measurementId}`): RDP's measurement ID is the stable URL. `layout.tsx` resolves the ID against the cached catalogue _before_ any streaming, so unknown, malformed and non-displayable IDs return a real 404 (indistinguishable from each other); the page then reads latest under its own `loading.tsx`.
 - Provider quality is shown only when it is a plain word (EA gauge quality arrives as raw JSON text); structured values are omitted, not printed.
 
