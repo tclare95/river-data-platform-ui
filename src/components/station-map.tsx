@@ -2,9 +2,10 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 import Link from "next/link";
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import { Button } from "@/components/button";
+import { CatchmentMeasurements, type CatchmentDiscovery } from "./catchment-measurements";
 import {
   drawRiverTrace,
   traceCatchment,
@@ -17,6 +18,7 @@ import type { StationGroup } from "@/lib/discovery";
 import { measurementPath, parameterLabel } from "@/lib/labels";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 import type { RiverDirection } from "@/lib/rdp/river-tracer";
+import type { PublicUpstreamMeasurements } from "@/lib/rdp/upstream-measurements";
 
 const matchLabels = {
   Matched: "River matched",
@@ -38,15 +40,25 @@ type Trace = {
   downstream?: TraceResult;
   hiddenRoutes?: Partial<Record<RiverDirection, boolean>>;
   showCatchment?: boolean;
+  discovery?: CatchmentDiscovery;
   error?: string;
 };
 
 const formatArea = new Intl.NumberFormat("en-GB", { maximumSignificantDigits: 6 });
 
+function pointQuery([lon, lat]: TracePoint) {
+  return new URLSearchParams({ lon: lon.toFixed(8), lat: lat.toFixed(8) });
+}
+
 type LocatedStation = StationGroup &
   Pick<PublicMeasurement, "locationEvidence" | "source"> & {
     position: NonNullable<PublicMeasurement["position"]>;
   };
+
+type MapStation = Omit<LocatedStation, "items"> & {
+  measurements: readonly PublicMeasurement[];
+  match: boolean;
+};
 
 export function StationMap({
   stations,
@@ -66,48 +78,48 @@ export function StationMap({
   }>();
   const [status, setStatus] = useState<"loading" | "ready" | "tiles" | "unavailable">("loading");
   const [selectedId, select] = useState<string>();
-  const selected = stations.find((station) => station.stationId === selectedId);
   const [tracing, setTracing] = useState(false);
-  const [direction, setDirection] = useState<RiverDirection>("downstream");
+  const [direction, setDirection] = useState<RiverDirection>("upstream");
   const [trace, setTrace] = useState<Trace>();
   const request = useRef<AbortController>(null);
+  const discoveryRequest = useRef<AbortController>(null);
 
   const clearTrace = () => {
     request.current?.abort();
+    discoveryRequest.current?.abort();
     setTrace(undefined);
   };
 
   const traceFrom = useCallback(
     async (point: TracePoint, direction: RiverDirection, previous?: Trace) => {
       request.current?.abort();
-      setTrace(previous ? { ...previous, error: undefined } : { point });
+      if (!previous) discoveryRequest.current?.abort();
+      setTrace((current) => (previous && current ? { ...current, error: undefined } : { point }));
       if (previous?.[direction]) return;
 
       const controller = new AbortController();
       request.current = controller;
-      const query = new URLSearchParams({
-        lon: point[0].toFixed(8),
-        lat: point[1].toFixed(8),
-        direction,
-      });
+      const query = pointQuery(point);
+      query.set("direction", direction);
       try {
         const response = await fetch(`/api/river/trace?${query}`, { signal: controller.signal });
         const result = response.ok ? ((await response.json()) as { data: TraceResult }).data : null;
         if (controller.signal.aborted) return;
+        const other = previous?.upstream ?? previous?.downstream;
+        // Keep the two directions together only when they describe the same match.
+        const changed =
+          result &&
+          other &&
+          (other.release.version !== result.release.version ||
+            other.release.releaseId !== result.release.releaseId ||
+            other.matchStatus !== result.matchStatus);
+        if (changed) discoveryRequest.current?.abort();
         setTrace((current) => {
           if (!current) return current;
           if (!result) {
             return { ...current, error: traceErrors[response.status] ?? "River trace unavailable" };
           }
-          const other = current.upstream ?? current.downstream;
-          // Keep the two directions together only when they describe the same match.
-          if (
-            other &&
-            (other.release.version !== result.release.version ||
-              other.release.releaseId !== result.release.releaseId ||
-              other.matchStatus !== result.matchStatus)
-          )
-            return { point, [direction]: result };
+          if (changed) return { point, [direction]: result };
           return { ...current, [direction]: result };
         });
       } catch {
@@ -118,7 +130,78 @@ export function StationMap({
     [],
   );
 
-  // Keep the selection only while the station still matches the filters.
+  const findMeasurements = async () => {
+    const upstream = trace?.upstream;
+    if (!trace || !upstream || trace.discovery?.status === "loading") return;
+
+    discoveryRequest.current?.abort();
+    const controller = new AbortController();
+    discoveryRequest.current = controller;
+    setTrace(
+      (current) =>
+        current && {
+          ...current,
+          showCatchment: true,
+          discovery: { status: "loading" },
+        },
+    );
+    const query = pointQuery(trace.point);
+    query.set("release", upstream.release.version.slice(0, 16));
+    const update = (discovery: CatchmentDiscovery) => {
+      if (controller.signal.aborted) return;
+      setTrace((current) => (current?.upstream === upstream ? { ...current, discovery } : current));
+    };
+    try {
+      const response = await fetch(`/api/river/upstream-measurements?${query}`, {
+        signal: controller.signal,
+      });
+      if (response.status === 410) return update({ status: "release-changed" });
+      if (!response.ok) return update({ status: "unavailable" });
+      const { data } = (await response.json()) as { data: PublicUpstreamMeasurements };
+      update(
+        data.release.version === upstream.release.version &&
+          data.release.releaseId === upstream.release.releaseId
+          ? { status: "result", data }
+          : { status: "release-changed" },
+      );
+    } catch {
+      update({ status: "unavailable" });
+    }
+  };
+
+  const discovery = trace?.discovery;
+  const matchedStations =
+    discovery?.status === "result" && discovery.data.status === "available"
+      ? discovery.data.data
+      : undefined;
+  const mappedStations = useMemo(() => {
+    const markers = new Map<string, MapStation>(
+      stations.map(({ items, ...station }) => [
+        station.stationId,
+        { ...station, measurements: items.map(({ measurement }) => measurement), match: false },
+      ]),
+    );
+    for (const { measurements } of matchedStations ?? []) {
+      const station = measurements.find(({ position }) => position);
+      if (station?.position) {
+        const { stationId, name, watercourseName, source, locationEvidence, position } = station;
+        markers.set(stationId, {
+          stationId,
+          name,
+          watercourseName,
+          source,
+          locationEvidence,
+          position,
+          measurements,
+          match: true,
+        });
+      }
+    }
+    return [...markers.values()];
+  }, [stations, matchedStations]);
+  const selected = mappedStations.find((station) => station.stationId === selectedId);
+
+  // A marker can disappear after a filter or catchment change.
   if (selectedId && !selected) select(undefined);
 
   useEffect(() => {
@@ -171,6 +254,7 @@ export function StationMap({
     return () => {
       active = false;
       request.current?.abort();
+      discoveryRequest.current?.abort();
       map?.remove();
     };
   }, [initialStations]);
@@ -194,30 +278,45 @@ export function StationMap({
   const result = trace?.[direction];
   const provenance = result ?? trace?.upstream ?? trace?.downstream;
   const snapped = trace?.upstream?.snappedSample ?? trace?.downstream?.snappedSample;
-  const upstream = traceGeometry(trace?.upstream);
+  const upstreamResult = trace?.upstream;
+  const upstream = traceGeometry(upstreamResult);
   const downstream = traceGeometry(trace?.downstream);
-  const catchment = traceCatchment(trace?.upstream);
+  const catchment = useMemo(() => traceCatchment(upstreamResult), [upstreamResult]);
+  const showCatchment = trace?.showCatchment !== false;
+  const visibleUpstream = trace?.hiddenRoutes?.upstream ? null : upstream;
+  const visibleDownstream = trace?.hiddenRoutes?.downstream ? null : downstream;
   useEffect(() => {
     if (!map || !styleReady || unavailable) return;
     drawRiverTrace(map, {
-      point: trace?.point,
+      point,
       snapped: snapped?.position,
-      upstream: trace?.hiddenRoutes?.upstream ? null : traceGeometry(trace?.upstream),
-      downstream: trace?.hiddenRoutes?.downstream ? null : traceGeometry(trace?.downstream),
-      catchment: trace?.showCatchment ? traceCatchment(trace.upstream) : null,
+      upstream: visibleUpstream,
+      downstream: visibleDownstream,
+      catchment: showCatchment ? catchment : null,
     });
-  }, [map, styleReady, unavailable, trace, snapped]);
+  }, [
+    map,
+    styleReady,
+    unavailable,
+    point,
+    snapped,
+    visibleUpstream,
+    visibleDownstream,
+    showCatchment,
+    catchment,
+  ]);
 
   useEffect(() => {
     if (!renderer || unavailable) return;
     const { map, library } = renderer;
-    const markers = stations.map(({ stationId, name, position }) => {
+    const markers = mappedStations.map(({ stationId, name, position, match }) => {
       const point: [number, number] = [position.longitude, position.latitude];
       const button = document.createElement("button");
       button.type = "button";
       button.className =
-        "grid size-11 cursor-pointer place-items-center rounded-full focus-visible:bg-accent-soft after:size-4 after:rounded-full after:border-2 after:border-surface after:bg-accent-strong after:shadow-md";
-      button.setAttribute("aria-label", name);
+        "grid size-11 cursor-pointer place-items-center rounded-full focus-visible:bg-accent-soft after:rounded-full after:border-2 after:border-surface after:bg-accent-strong after:shadow-md " +
+        (match ? "after:size-5 after:ring-2 after:ring-accent-strong" : "after:size-4");
+      button.setAttribute("aria-label", match ? `${name}, inside the modelled catchment` : name);
       button.setAttribute("aria-controls", detailsId);
       button.title = name;
       button.onclick = () => {
@@ -227,7 +326,7 @@ export function StationMap({
       return new library.Marker({ element: button }).setLngLat(point).addTo(map);
     });
     return () => markers.forEach((marker) => marker.remove());
-  }, [detailsId, renderer, stations, unavailable]);
+  }, [detailsId, renderer, mappedStations, unavailable]);
 
   const selectedStationId = selected?.stationId;
   useEffect(() => {
@@ -252,7 +351,7 @@ export function StationMap({
           {status === "loading" ? "Loading map…" : "Some basemap details could not load."}
         </p>
       ) : null}
-      {!unavailable && stations.length === 0 ? (
+      {!unavailable && mappedStations.length === 0 ? (
         <p className="border-t border-line px-4 py-2 text-sm text-ink-muted">
           No matching stations have verified locations
         </p>
@@ -325,7 +424,7 @@ export function StationMap({
                     Snapped sample · {Math.round(snapped.snapOffsetM)} m away
                   </span>
                 ) : null}
-                {trace.showCatchment && catchment?.pourPointOffsetM === 0 && snapped?.position ? (
+                {showCatchment && catchment?.pourPointOffsetM === 0 && snapped?.position ? (
                   <span className="inline-flex items-center gap-1.5">
                     <span
                       aria-hidden="true"
@@ -402,17 +501,17 @@ export function StationMap({
                           (current) =>
                             current && {
                               ...current,
-                              showCatchment: !current.showCatchment,
+                              showCatchment: current.showCatchment === false,
                             },
                         )
                       }
                     >
-                      {trace.showCatchment ? "Hide catchment" : "Show catchment"}
+                      {showCatchment ? "Hide catchment" : "Show catchment"}
                     </Button>
                   ) : null}
                 </div>
               ) : null}
-              {trace.showCatchment && catchment ? (
+              {showCatchment && catchment ? (
                 <div className="space-y-1 text-ink-muted">
                   <p>
                     <strong className="text-ink">
@@ -437,6 +536,17 @@ export function StationMap({
           ) : null}
         </div>
       ) : null}
+      {trace && catchment ? (
+        <CatchmentMeasurements
+          discovery={discovery}
+          find={() => void findMeasurements()}
+          refreshTrace={() => {
+            setDirection("upstream");
+            void traceFrom(trace.point, "upstream");
+          }}
+          comparisonAction={comparisonAction}
+        />
+      ) : null}
       <div id={detailsId}>
         {selected && !unavailable ? (
           <div className="space-y-2 border-t border-line px-5 py-4 sm:px-6">
@@ -452,12 +562,12 @@ export function StationMap({
               <p className="text-sm text-ink-muted">{selected.watercourseName}</p>
             ) : null}
             <ul className="space-y-1">
-              {selected.items.map(({ measurement }) => (
+              {selected.measurements.map((measurement) => (
                 <li key={measurement.measurementId} className="flex flex-wrap items-center gap-x-3">
                   <Link className="link" href={measurementPath(measurement.measurementId)}>
                     {parameterLabel(measurement.parameter)}
                   </Link>
-                  {!tracing ? comparisonAction(measurement) : null}
+                  {!tracing || selected.match ? comparisonAction(measurement) : null}
                 </li>
               ))}
             </ul>
