@@ -243,7 +243,7 @@ describe("measurement explorer", () => {
     mapClick(map);
     expect(await screen.findByText(/Selected point’s modelled catchment/)).toBeInTheDocument();
     expect(fetchRiver).toHaveBeenCalledTimes(1);
-    expect(traceKinds()).toContain("catchment");
+    await waitFor(() => expect(traceKinds()).toContain("catchment"));
   });
 
   it.each([
@@ -693,7 +693,7 @@ describe("measurement explorer", () => {
       await user.selectOptions(direction, "upstream");
       mapClick(map, -1.2, 52.6);
       expect(await screen.findByRole("button", { name: "Hide catchment" })).toBeInTheDocument();
-      expect(traceKinds()).toContain("catchment");
+      await waitFor(() => expect(traceKinds()).toContain("catchment"));
     },
   );
 
