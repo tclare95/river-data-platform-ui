@@ -87,7 +87,11 @@ tracer path in the Vercel Firewall rate-limit rule before enabling live traffic.
 
 The station map's opt-in Trace river mode calls this application endpoint from a map point or a verified station
 position. Station markers still open station details. One MapLibre source displays the selected point, any published
-snapped sample and the returned reaches. Changing selection or direction cancels the previous browser request.
+snapped sample, independently toggled upstream and downstream reaches, and an opt-in catchment. Directions are
+loaded on demand for the current point and only combined within the same release. Changing the trace point or
+direction cancels the previous browser request. A zero-offset pour point shares the snapped sample's coordinates.
+For a downstream offset, the map describes where the published sample lies along the river because the public
+response supplies the distance only. The catchment is modelled drainage and leaves the station comparison untouched.
 
 Live signed access is awaiting verification. The stage needs the River Lambda release that admits the dedicated
 UI role and that role's `--ui --river` caller policy applied before a signed smoke from the corresponding Vercel
