@@ -1,10 +1,18 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { LatestLine } from "@/components/latest-reading";
 import type { StationGroup } from "@/lib/discovery";
 import { measurementPath, parameterLabel } from "@/lib/labels";
+import type { PublicMeasurement } from "@/lib/rdp/public";
 
 /** Stations with their published measurements; each measurement row links to its detail page. */
-export function MeasurementList({ groups }: { groups: readonly StationGroup[] }) {
+export function MeasurementList({
+  groups,
+  comparisonAction,
+}: {
+  groups: readonly StationGroup[];
+  comparisonAction?: (measurement: PublicMeasurement) => ReactNode;
+}) {
   return (
     <ul className="space-y-4">
       {groups.map((group) => (
@@ -25,7 +33,7 @@ export function MeasurementList({ groups }: { groups: readonly StationGroup[] })
                 className="relative transition-colors hover:bg-canvas"
               >
                 <div className="flex flex-col gap-1 px-5 py-3.5 sm:px-6 @lg:grid @lg:grid-cols-[11rem_minmax(0,1fr)] @lg:items-baseline @lg:gap-6">
-                  {/* The link's ::after covers the row, so the whole row is one target and one tab stop. */}
+                  {/* The link covers the row behind the separate comparison action. */}
                   <Link
                     href={measurementPath(measurement.measurementId)}
                     className="font-medium text-accent underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-accent"
@@ -36,6 +44,7 @@ export function MeasurementList({ groups }: { groups: readonly StationGroup[] })
                   <p className="text-sm">
                     <LatestLine measurement={measurement} latest={latest} />
                   </p>
+                  {comparisonAction?.(measurement)}
                 </div>
               </li>
             ))}

@@ -2,7 +2,7 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 import Link from "next/link";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import { Button } from "@/components/button";
 import {
@@ -38,7 +38,13 @@ type LocatedStation = StationGroup &
     position: NonNullable<PublicMeasurement["position"]>;
   };
 
-export function StationMap({ stations }: { stations: readonly LocatedStation[] }) {
+export function StationMap({
+  stations,
+  comparisonAction,
+}: {
+  stations: readonly LocatedStation[];
+  comparisonAction: (measurement: PublicMeasurement) => ReactNode;
+}) {
   const container = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const detailsId = useId();
@@ -317,12 +323,13 @@ export function StationMap({ stations }: { stations: readonly LocatedStation[] }
             {selected.watercourseName ? (
               <p className="text-sm text-ink-muted">{selected.watercourseName}</p>
             ) : null}
-            <ul className="flex flex-wrap gap-x-5">
+            <ul className="space-y-1">
               {selected.items.map(({ measurement }) => (
-                <li key={measurement.measurementId}>
+                <li key={measurement.measurementId} className="flex flex-wrap items-center gap-x-3">
                   <Link className="link" href={measurementPath(measurement.measurementId)}>
                     {parameterLabel(measurement.parameter)}
                   </Link>
+                  {!tracing ? comparisonAction(measurement) : null}
                 </li>
               ))}
             </ul>

@@ -7,6 +7,14 @@ import { StationMap } from "@/components/station-map";
 import { EmptyState } from "@/components/states";
 import { Button } from "@/components/button";
 import {
+  COMPARE_SLOTS,
+  compareHref,
+  compareParams,
+  comparisonLabel,
+  needsMoreCompareAxes,
+  readCompareQuery,
+} from "@/lib/compare";
+import {
   filterItems,
   groupByStation,
   MAX_QUERY_LENGTH,
@@ -17,11 +25,20 @@ import {
 } from "@/lib/discovery";
 import { parameterLabel } from "@/lib/labels";
 import type { OverviewItem } from "@/lib/overview";
+import type { PublicMeasurement } from "@/lib/rdp/public";
 
 export const ANNOUNCE_DELAY_MS = 500;
 
 function plural(count: number, one: string, many: string) {
   return `${count} ${count === 1 ? one : many}`;
+}
+
+function comparisonBlock(selected: readonly PublicMeasurement[], candidate: PublicMeasurement) {
+  if (selected.some(({ measurementId }) => measurementId === candidate.measurementId)) {
+    return "Added to comparison";
+  }
+  if (selected.length >= COMPARE_SLOTS.length) return "Four measurements selected";
+  if (needsMoreCompareAxes([...selected, candidate])) return "Needs a third axis";
 }
 
 /**
@@ -31,25 +48,65 @@ function plural(count: number, one: string, many: string) {
 export function MeasurementExplorer({
   items,
   initialQuery,
+  initialComparison,
 }: {
   items: readonly OverviewItem[];
   initialQuery: DiscoveryQuery;
+  initialComparison?: ReturnType<typeof readCompareQuery>;
 }) {
   // On first load the URL and the server's query are the same. When the router restores this page (Back), it reuses
   // the original server payload, so the current URL is the truth.
-  const [start] = useState(() =>
-    typeof window === "undefined"
-      ? initialQuery
-      : readQuery(Object.fromEntries(new URLSearchParams(window.location.search))),
-  );
-  const [q, setQ] = useState(start.q);
+  const [start] = useState(() => {
+    if (typeof window === "undefined")
+      return { query: initialQuery, comparison: initialComparison };
+    const params = new URLSearchParams(window.location.search);
+    return { query: readQuery(Object.fromEntries(params)), comparison: readCompareQuery(params) };
+  });
+  const [selected, setSelected] = useState(() => {
+    const restored: PublicMeasurement[] = [];
+    if (!start.comparison?.repeated) {
+      for (const id of start.comparison?.ids ?? []) {
+        const measurement = items.find(
+          ({ measurement }) => measurement.measurementId === id,
+        )?.measurement;
+        if (measurement && !comparisonBlock(restored, measurement)) restored.push(measurement);
+      }
+    }
+    return restored;
+  });
+  const ids = useMemo(() => selected.map(({ measurementId }) => measurementId), [selected]);
+  const addToComparison = (measurement: PublicMeasurement) => {
+    const blocked = comparisonBlock(selected, measurement);
+    return (
+      <Button
+        aria-label={`${blocked ?? "Add to comparison"}: ${comparisonLabel(measurement)}`}
+        aria-disabled={!!blocked}
+        onClick={() =>
+          setSelected((current) =>
+            comparisonBlock(current, measurement) ? current : [...current, measurement],
+          )
+        }
+        className="relative z-10 w-fit [@media(scripting:none)]:hidden"
+      >
+        {blocked ?? "Add to comparison"}
+      </Button>
+    );
+  };
+  const [q, setQ] = useState(start.query.q);
   const types = useMemo(() => typeOptions(items), [items]);
-  const [type, setType] = useState(start.type && types.includes(start.type) ? start.type : null);
+  const [type, setType] = useState(
+    start.query.type && types.includes(start.query.type) ? start.query.type : null,
+  );
   const searchId = useId();
   const listId = useId();
 
   const results = useMemo(() => filterItems(items, { q, type }), [items, q, type]);
   const groups = useMemo(() => groupByStation(results), [results]);
+  const catalogueGroups = useMemo(() => groupByStation(items), [items]);
+  const catalogueByStation = useMemo(
+    () => new Map(catalogueGroups.map((group) => [group.stationId, group])),
+    [catalogueGroups],
+  );
   const locations = useMemo(
     () =>
       new Map(
@@ -61,11 +118,12 @@ export function MeasurementExplorer({
   );
   const stations = useMemo(
     () =>
-      groups.flatMap((group) => {
-        const location = locations.get(group.stationId);
-        return location ? [{ ...group, ...location }] : [];
+      groups.flatMap(({ stationId }) => {
+        const location = locations.get(stationId);
+        const group = catalogueByStation.get(stationId);
+        return location && group ? [{ ...group, ...location }] : [];
       }),
-    [groups, locations],
+    [catalogueByStation, groups, locations],
   );
   // Once initialized, keep the map and its viewport through filters with no mapped results.
   const [mapStarted, setMapStarted] = useState(stations.length > 0);
@@ -74,10 +132,11 @@ export function MeasurementExplorer({
 
   useEffect(() => {
     // Keep the current view shareable without adding a history entry per keystroke.
-    // Only `q` and `type` are ours: other parameters and the fragment are kept.
+    // Update only the explorer filters and comparison slots.
     const url = new URL(window.location.href);
     const ours = new URL(searchHref({ q, type }), url.origin).searchParams;
-    for (const name of ["q", "type"]) {
+    compareParams(ids).forEach((value, name) => ours.set(name, value));
+    for (const name of ["q", "type", ...COMPARE_SLOTS]) {
       const value = ours.get(name);
       if (value === null) url.searchParams.delete(name);
       else url.searchParams.set(name, value);
@@ -85,13 +144,13 @@ export function MeasurementExplorer({
     if (url.href !== window.location.href)
       // `null` state: Next adopts the new URL as canonical (its documented integration), so Back restores it.
       window.history.replaceState(null, "", url);
-  }, [q, type]);
+  }, [q, type, ids]);
 
   const count = filtered
     ? results.length === 0
       ? "No measurements found"
       : `${plural(results.length, "measurement", "measurements")} found`
-    : `${plural(items.length, "measurement", "measurements")} at ${plural(groupByStation(items).length, "station", "stations")}`;
+    : `${plural(items.length, "measurement", "measurements")} at ${plural(catalogueGroups.length, "station", "stations")}`;
   const [announcement, setAnnouncement] = useState("");
   useEffect(() => {
     const timer = setTimeout(() => setAnnouncement(filtered ? count : ""), ANNOUNCE_DELAY_MS);
@@ -112,6 +171,9 @@ export function MeasurementExplorer({
         onSubmit={(event) => event.preventDefault()}
         className="space-y-4 lg:flex lg:flex-wrap lg:items-end lg:gap-x-6 lg:gap-y-4 lg:space-y-0"
       >
+        {ids.map((id, index) => (
+          <input key={id} type="hidden" name={COMPARE_SLOTS[index]} value={id} />
+        ))}
         <div className="lg:w-full lg:max-w-lg">
           <label htmlFor={searchId} className="block text-sm font-medium">
             Search
@@ -174,10 +236,59 @@ export function MeasurementExplorer({
         {announcement}
       </p>
 
+      <section
+        aria-label="Comparison selection"
+        className="sticky top-0 z-20 mt-3 max-h-[40svh] overflow-auto rounded-lg border border-line bg-surface px-4 py-2 [@media(scripting:none)]:hidden"
+      >
+        <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-3">
+          <p aria-live="polite" className="text-sm font-medium">
+            {selected.length === 0
+              ? "Add measurements to compare"
+              : `${selected.length} of ${COMPARE_SLOTS.length} selected`}
+            {selected.length === 1 ? " · Add another to compare" : ""}
+          </p>
+          {selected.length >= 2 ? (
+            <Link
+              href={compareHref(ids)}
+              prefetch={false}
+              className="inline-flex min-h-10 items-center rounded-md bg-accent px-4 text-sm font-semibold text-surface hover:bg-accent-strong"
+            >
+              Compare selected measurements
+            </Link>
+          ) : null}
+        </div>
+        {selected.length > 0 ? (
+          <ul aria-label="Selected measurements" className="mt-1 flex flex-wrap gap-1.5">
+            {selected.map((measurement) => (
+              <li
+                key={measurement.measurementId}
+                className="flex items-center gap-2 rounded-md border border-line px-2 text-sm"
+              >
+                {comparisonLabel(measurement)}
+                <button
+                  type="button"
+                  aria-label={`Remove ${comparisonLabel(measurement)}`}
+                  className="link min-h-10"
+                  onClick={() =>
+                    setSelected((current) =>
+                      current.filter(
+                        ({ measurementId }) => measurementId !== measurement.measurementId,
+                      ),
+                    )
+                  }
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+
       <div className="mt-3 flex flex-col gap-5 lg:flex-row lg:items-start">
         {mapStarted ? (
           <div className="min-w-0 lg:w-2/3 lg:shrink-0 [@media(scripting:none)]:hidden">
-            <StationMap stations={stations} />
+            <StationMap stations={stations} comparisonAction={addToComparison} />
           </div>
         ) : null}
         <section aria-labelledby={listId} className="@container min-w-0 flex-1">
@@ -185,7 +296,7 @@ export function MeasurementExplorer({
             Stations
           </h2>
           {groups.length > 0 ? (
-            <MeasurementList groups={groups} />
+            <MeasurementList groups={groups} comparisonAction={addToComparison} />
           ) : (
             <EmptyState
               title="No matching measurements"

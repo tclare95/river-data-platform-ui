@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MeasurementExplorer } from "@/components/measurement-explorer";
@@ -161,7 +161,7 @@ describe("measurement explorer", () => {
     await user.click(screen.getByRole("radio", { name: "Flow" }));
     expect(map.getByRole("button", { name: "Shardlow" })).toBeInTheDocument();
     expect(map.queryByRole("button", { name: "Kegworth" })).not.toBeInTheDocument();
-    expect(details.queryByRole("link", { name: "Water level" })).not.toBeInTheDocument();
+    expect(details.getByRole("link", { name: "Water level" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Shardlow Water level" })).not.toBeInTheDocument();
 
@@ -178,6 +178,88 @@ describe("measurement explorer", () => {
     expect(details.queryByRole("heading")).not.toBeInTheDocument();
     expect(mapMock.create).toHaveBeenCalledTimes(1);
     expect(mapMock.fitBounds).not.toHaveBeenCalled();
+  });
+
+  it("shares a comparison between a marker and the accessible list and restores it from the URL", async () => {
+    addPublishedPositions();
+    const user = userEvent.setup();
+    const explorer = <MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />;
+    render(explorer);
+    const map = within(screen.getByRole("region", { name: "Station locations" }));
+    const marker = await map.findByRole("button", { name: "Shardlow" });
+    await user.click(marker);
+    const details = within(document.getElementById(marker.getAttribute("aria-controls")!)!);
+    const list = within(screen.getByRole("region", { name: "Stations" }));
+    const selection = within(screen.getByRole("region", { name: "Comparison selection" }));
+
+    await user.click(
+      details.getByRole("button", { name: /^Add to comparison: Shardlow · Water level/ }),
+    );
+    expect(selection.queryByRole("link")).not.toBeInTheDocument();
+    const duplicate = list.getByRole("button", {
+      name: /^Added to comparison: Shardlow · Water level/,
+    });
+    expect(duplicate).toHaveAttribute("aria-disabled", "true");
+    await user.click(duplicate);
+    expect(selection.getAllByRole("listitem")).toHaveLength(1);
+
+    await user.click(details.getByRole("button", { name: /^Add to comparison: Shardlow · Flow/ }));
+    const rainfall = list.getByRole("button", { name: /^Needs a third axis: Stone · Rainfall/ });
+    expect(rainfall).toHaveAttribute("aria-disabled", "true");
+    await user.click(rainfall);
+    expect(selection.getAllByRole("listitem")).toHaveLength(2);
+    await user.click(selection.getByRole("button", { name: /^Remove Shardlow · Flow/ }));
+    await user.click(list.getByRole("button", { name: /^Add to comparison: Stone · Rainfall/ }));
+    const query = "?a=ea-shardlow-level&b=ea-stone-rainfall";
+    expect(selection.getByRole("link", { name: "Compare selected measurements" })).toHaveAttribute(
+      "href",
+      `/compare${query}`,
+    );
+    expect(window.location.search).toBe(query);
+
+    await user.type(screen.getByRole("searchbox"), "stone");
+    expect(selection.getAllByRole("listitem")).toHaveLength(2);
+    cleanup();
+    render(explorer);
+    expect(screen.getByRole("searchbox")).toHaveValue("stone");
+    expect(screen.getByRole("link", { name: "Compare selected measurements" })).toHaveAttribute(
+      "href",
+      `/compare${query}`,
+    );
+  });
+
+  it("accepts four compatible IDs and blocks a fifth until one is removed", async () => {
+    const levels = items.filter(({ measurement }) => measurement.parameter === "level");
+    for (const { measurement } of levels) {
+      measurement.datum = "AOD";
+      measurement.unit = "mAOD";
+    }
+    const user = userEvent.setup();
+    render(<MeasurementExplorer items={levels} initialQuery={{ q: "", type: null }} />);
+    const list = within(screen.getByRole("region", { name: "Stations" }));
+    for (const button of list.getAllByRole("button", { name: /^Add to comparison/ }).slice(0, 4)) {
+      await user.click(button);
+    }
+    const selection = within(screen.getByRole("region", { name: "Comparison selection" }));
+    const fifth = list.getByRole("button", { name: /^Four measurements selected/ });
+    expect(fifth).toHaveAttribute("aria-disabled", "true");
+    await user.click(fifth);
+    expect(selection.getAllByRole("listitem")).toHaveLength(4);
+    const href = selection.getByRole("link").getAttribute("href");
+    expect(href).toBe(
+      "/compare?" +
+        new URLSearchParams(
+          Object.fromEntries(
+            levels
+              .slice(0, 4)
+              .map(({ measurement }, index) => ["abcd"[index], measurement.measurementId]),
+          ),
+        ),
+    );
+    await user.click(selection.getAllByRole("button", { name: /^Remove/ })[0]);
+    expect(fifth).toHaveAttribute("aria-disabled", "false");
+    await user.click(fifth);
+    expect(selection.getAllByRole("listitem")).toHaveLength(4);
   });
 
   it("starts with list results when the URL filters out all verified locations", async () => {
@@ -267,6 +349,8 @@ describe("measurement explorer", () => {
     await user.keyboard("{Enter}");
     mapClick(marker);
     expect(fetchTrace).not.toHaveBeenCalled();
+    const details = within(document.getElementById(marker.getAttribute("aria-controls")!)!);
+    expect(details.queryByRole("button", { name: /^Add to comparison/ })).not.toBeInTheDocument();
     const station = screen.getByRole("button", { name: "Trace from Shardlow" });
     station.focus();
     await user.keyboard("{Enter}");
@@ -308,6 +392,7 @@ describe("measurement explorer", () => {
     expect(screen.queryByText(/upstream route incomplete/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
     await user.click(mode);
+    expect(details.getAllByRole("button", { name: /^Add to comparison/ })).toHaveLength(2);
     expect(map).toHaveClass("maplibregl-map");
     mapClick(map);
     expect(fetchTrace).toHaveBeenCalledTimes(2);

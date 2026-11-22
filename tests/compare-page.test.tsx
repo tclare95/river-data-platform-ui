@@ -89,6 +89,8 @@ describe("compare page", () => {
     expect(within(add).queryByRole("option", { name: /^Shardlow · Water level/ })).toBeNull();
     const user = userEvent.setup();
     await user.tab();
+    expect(screen.getByRole("link", { name: "Back to explorer" })).toHaveFocus();
+    await user.tab();
     expect(screen.getByRole("link", { name: /^Remove Shardlow/ })).toHaveFocus();
     await user.tab();
     expect(add).toHaveFocus();
@@ -281,6 +283,10 @@ describe("compare page", () => {
       }),
     );
     await renderCompare({ a: "ea-colwick-level", b: "ea-stone-rainfall" });
+    expect(screen.getByRole("link", { name: "Back to explorer" })).toHaveAttribute(
+      "href",
+      "/?a=ea-colwick-level&b=ea-stone-rainfall",
+    );
     const chart = screen.getByRole("img", { name: /^Shared timeline/ });
     expect(chart).toHaveAccessibleName(/Left axis · mASD.*Right axis · mm per 15 minutes/);
     const bar = within(chart).getByText(/18 Nov, 11:45 to 18 Nov, 12:00 · 1.25 mm/).parentElement!;
