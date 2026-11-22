@@ -35,7 +35,7 @@ Server Components can fetch RDP data directly for HTML rendering; add Route Hand
 
 Use Server Components by default; isolate interactive components. No generic repository/service abstraction until actual duplication justifies it.
 
-Recharts draws the history chart. MapLibre GL JS loads in the browser when a visitor opens the station map.
+Recharts draws the history chart. MapLibre GL JS loads in the browser for the Explorer river map.
 
 ## RDP adapter
 
@@ -85,7 +85,7 @@ in-process cache holds up to eight validated release/sample/direction/geometry r
 reads evicted. Coordinate queries and public responses are uncached. The public JSON cap is 4 MiB. Include the
 tracer path in the Vercel Firewall rate-limit rule before enabling live traffic.
 
-The station map's opt-in Trace river mode calls this application endpoint from a map point or a verified station
+The river map's opt-in Trace river mode calls this application endpoint from a map point or a verified station
 position. Station markers still open station details. One MapLibre source displays the selected point, any published
 snapped sample, independently toggled upstream and downstream reaches, and a toggleable catchment. Directions are
 loaded on demand for the current point and only combined within the same release. Changing the trace point or
@@ -168,7 +168,8 @@ counts. The fixture suite uses synthetic RDP responses and does not depend on th
 ## Discovery and detail pages
 
 - **Home** (`src/app/(home)/`): the public catalogue with RDP's latest state, grouped by RDP `stationId`. The home page waits for the catalogue so the station list is visible in the initial HTML without a streaming reveal script. Search and the type filter are pure functions over the already-loaded catalogue (`src/lib/discovery.ts`) in one client component; the view is mirrored in `?q=&type=` with `history.replaceState` and also works as a plain GET form without JavaScript. Search covers station name, verified watercourse, parameter, provider, unit and ID. The type filter appears only when more than one type is published.
-- **Station map** — The map loads MapLibre in the browser when there are matching verified catalogue positions. Initial bounds fit those stations, and subsequent filters update markers without changing the viewport. Selecting a marker reveals the station's published measurements, provider position resolution and public station record where available. The browser requests the attributed [OpenFreeMap Positron basemap](https://openfreemap.org/quick_start/) directly. Basemap errors leave markers usable. The station list includes unlocated stations and works independently of JavaScript, WebGL and tiles.
+- **River map** — The home page mounts the map even with an empty or unavailable catalogue. The default camera fits Great Britain. Valid `?lon=&lat=&zoom=` sets the camera, with zoom 12 when omitted. `?station=` opens a catalogue station with verified coordinates and centres it unless an explicit camera is supplied. The station layer starts hidden and opens automatically for an explicit station. Search updates that layer while preserving the camera, selected station and point trace. The station list includes unlocated stations and works independently of JavaScript, WebGL and tiles. The browser requests the attributed OpenFreeMap Positron basemap directly. [Basemap documentation](https://openfreemap.org/quick_start/)
+- **Drainage overview** — The launch fallback uses the basemap. The map's sources and coverage disclosure explains that overview boundaries are unavailable. Selecting a point uses the existing signed River Tracer route and labels the result as a modelled catchment for that point. The overview layer depends on RDP's approved immutable manifest, geometry format and public delivery URL. [RDP overview specification](https://github.com/tclare95/river-data-platform/pull/151)
 - **Explorer comparison** — The map and station list add to one selection using the comparison page's two-axis rules. The explorer keeps the ordered `a`–`d` slots alongside its search filters, links to the existing `/compare` chart, and restores selections from the return link or browser Back. In River Tracer mode the catchment list and its highlighted markers offer the same comparison actions.
 - **Detail** (`/measurements/{measurementId}`): RDP's measurement ID is the stable URL. `layout.tsx` resolves the ID against the cached catalogue _before_ any streaming, so unknown, malformed and non-displayable IDs return a real 404 (indistinguishable from each other); the page then reads latest under its own `loading.tsx`.
 - Provider quality is shown only when it is a plain word (EA gauge quality arrives as raw JSON text); structured values are omitted, not printed.

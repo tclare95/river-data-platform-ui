@@ -16,6 +16,7 @@ import {
 import { ErrorState } from "@/components/states";
 import type { StationGroup } from "@/lib/discovery";
 import { measurementPath, parameterLabel } from "@/lib/labels";
+import { GB_BOUNDS, LOCATION_ZOOM, MAX_MAP_ZOOM, type readMapContext } from "@/lib/map-context";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 import type { RiverDirection } from "@/lib/rdp/river-tracer";
 import type { PublicUpstreamMeasurements } from "@/lib/rdp/upstream-measurements";
@@ -62,22 +63,40 @@ type MapStation = Omit<LocatedStation, "items"> & {
 
 export function StationMap({
   stations,
+  filteredStationIds,
+  initialView,
+  initialStationId,
   comparisonAction,
 }: {
   stations: readonly LocatedStation[];
+  filteredStationIds: ReadonlySet<string>;
+  initialView?: ReturnType<typeof readMapContext>["view"];
+  initialStationId?: string;
   comparisonAction: (measurement: PublicMeasurement) => ReactNode;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const focusSelection = useRef(false);
   const detailsId = useId();
-  const [initialStations] = useState(stations);
+  const [initialStation] = useState(() =>
+    stations.find(({ stationId }) => stationId === initialStationId),
+  );
+  const [initialCamera] = useState(() => {
+    if (initialView) return initialView;
+    if (initialStation) {
+      const { longitude, latitude } = initialStation.position;
+      return { center: [longitude, latitude] as TracePoint, zoom: LOCATION_ZOOM };
+    }
+    return { bounds: GB_BOUNDS, fitBoundsOptions: { padding: 20, duration: 0 } };
+  });
   const [styleReady, setStyleReady] = useState(false);
   const [renderer, setRenderer] = useState<{
     map: MapLibreMap;
     library: typeof import("maplibre-gl");
   }>();
   const [status, setStatus] = useState<"loading" | "ready" | "tiles" | "unavailable">("loading");
-  const [selectedId, select] = useState<string>();
+  const [selectedId, select] = useState(initialStation?.stationId);
+  const [showStations, setShowStations] = useState(!!initialStation);
   const [tracing, setTracing] = useState(false);
   const [direction, setDirection] = useState<RiverDirection>("upstream");
   const [trace, setTrace] = useState<Trace>();
@@ -113,9 +132,10 @@ export function StationMap({
           (other.release.version !== result.release.version ||
             other.release.releaseId !== result.release.releaseId ||
             other.matchStatus !== result.matchStatus);
-        if (changed) discoveryRequest.current?.abort();
+        if (changed || response.status === 410) discoveryRequest.current?.abort();
         setTrace((current) => {
           if (!current) return current;
+          if (response.status === 410) return { point, error: traceErrors[410] };
           if (!result) {
             return { ...current, error: traceErrors[response.status] ?? "River trace unavailable" };
           }
@@ -201,7 +221,7 @@ export function StationMap({
   }, [stations, matchedStations]);
   const selected = mappedStations.find((station) => station.stationId === selectedId);
 
-  // A marker can disappear after a filter or catchment change.
+  // Catchment-only stations may go away when a new point or release is selected.
   if (selectedId && !selected) select(undefined);
 
   useEffect(() => {
@@ -215,21 +235,16 @@ export function StationMap({
         library.setWorkerUrl(
           new URL("maplibre-gl/dist/maplibre-gl-worker.mjs", import.meta.url).toString(),
         );
-        const bounds = new library.LngLatBounds();
-        for (const { position } of initialStations) {
-          bounds.extend([position.longitude, position.latitude]);
-        }
         map = new library.Map({
           container: element,
           style: "https://tiles.openfreemap.org/styles/positron",
-          bounds,
-          fitBoundsOptions: { padding: 36, maxZoom: 12, duration: 0 },
+          ...initialCamera,
           cooperativeGestures: true,
           dragRotate: false,
           pitchWithRotate: false,
           renderWorldCopies: false,
           scrollZoom: false,
-          maxZoom: 16,
+          maxZoom: MAX_MAP_ZOOM,
         });
         map.touchZoomRotate.disableRotation();
         map.addControl(new library.NavigationControl({ showCompass: false }));
@@ -257,7 +272,7 @@ export function StationMap({
       discoveryRequest.current?.abort();
       map?.remove();
     };
-  }, [initialStations]);
+  }, [initialCamera]);
 
   const unavailable = status === "unavailable";
   const map = renderer?.map;
@@ -309,7 +324,11 @@ export function StationMap({
   useEffect(() => {
     if (!renderer || unavailable) return;
     const { map, library } = renderer;
-    const markers = mappedStations.map(({ stationId, name, position, match }) => {
+    const visible = mappedStations.filter(
+      ({ stationId, match }) =>
+        match || (showStations && (stationId === selectedId || filteredStationIds.has(stationId))),
+    );
+    const markers = visible.map(({ stationId, name, position, match }) => {
       const point: [number, number] = [position.longitude, position.latitude];
       const button = document.createElement("button");
       button.type = "button";
@@ -321,16 +340,26 @@ export function StationMap({
       button.title = name;
       button.onclick = () => {
         if (heading.current?.dataset.stationId === stationId) heading.current.focus();
+        else focusSelection.current = true;
         select(stationId);
       };
       return new library.Marker({ element: button }).setLngLat(point).addTo(map);
     });
     return () => markers.forEach((marker) => marker.remove());
-  }, [detailsId, renderer, mappedStations, unavailable]);
+  }, [
+    detailsId,
+    renderer,
+    mappedStations,
+    unavailable,
+    filteredStationIds,
+    selectedId,
+    showStations,
+  ]);
 
   const selectedStationId = selected?.stationId;
   useEffect(() => {
-    if (selectedStationId) heading.current?.focus();
+    if (selectedStationId && focusSelection.current) heading.current?.focus();
+    focusSelection.current = false;
   }, [selectedStationId]);
 
   return (
@@ -339,21 +368,16 @@ export function StationMap({
       <div
         ref={container}
         role="region"
-        aria-label="Station locations"
+        aria-label="River map"
         hidden={unavailable}
         data-tracing={tracing}
         className="h-72 bg-canvas sm:h-96 lg:h-[clamp(26rem,60svh,42rem)] data-[tracing=true]:[&_.maplibregl-canvas]:cursor-crosshair"
       />
       {unavailable ? (
-        <ErrorState title="Station map unavailable">Browse the station list.</ErrorState>
+        <ErrorState title="River map unavailable">Browse the station list.</ErrorState>
       ) : status === "tiles" || status === "loading" ? (
         <p role="status" className="px-4 py-2 text-sm text-ink-muted">
           {status === "loading" ? "Loading map…" : "Some basemap details could not load."}
-        </p>
-      ) : null}
-      {!unavailable && mappedStations.length === 0 ? (
-        <p className="border-t border-line px-4 py-2 text-sm text-ink-muted">
-          No matching stations have verified locations
         </p>
       ) : null}
       {map && !unavailable ? (
@@ -369,6 +393,15 @@ export function StationMap({
             >
               Trace river
             </Button>
+            {stations.length > 0 ? (
+              <Button
+                aria-pressed={showStations}
+                className="aria-pressed:border-accent aria-pressed:bg-accent-soft"
+                onClick={() => setShowStations(!showStations)}
+              >
+                Published stations
+              </Button>
+            ) : null}
             {tracing ? (
               <>
                 <label className="flex items-center gap-2 text-sm">
@@ -405,6 +438,25 @@ export function StationMap({
               Click the map or select a station to trace from.
             </p>
           ) : null}
+          {showStations && !stations.some(({ stationId }) => filteredStationIds.has(stationId)) ? (
+            <p className="text-sm text-ink-muted">No matching stations have verified locations</p>
+          ) : null}
+          <details className="text-sm text-ink-muted">
+            <summary className="flex min-h-11 cursor-pointer items-center underline">
+              Map sources and coverage
+            </summary>
+            <p>
+              Basemap by{" "}
+              <a className="link" href="https://openfreemap.org/">
+                OpenFreeMap
+              </a>{" "}
+              using OpenStreetMap data.
+            </p>
+            <p>
+              Drainage area overview boundaries are currently unavailable. Select a river point to
+              check for a modelled upstream catchment.
+            </p>
+          </details>
         </div>
       ) : null}
       {tracing && !unavailable ? (
@@ -515,7 +567,8 @@ export function StationMap({
                 <div className="space-y-1 text-ink-muted">
                   <p>
                     <strong className="text-ink">
-                      Catchment area {formatArea.format(catchment.areaKm2)} km²
+                      Selected point’s modelled catchment · {formatArea.format(catchment.areaKm2)}{" "}
+                      km²
                     </strong>
                   </p>
                   <p>Source · {catchment.sourceNetworkRelease}</p>
