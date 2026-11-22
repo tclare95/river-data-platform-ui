@@ -10,6 +10,8 @@ import { publicMeasurements, toPublicLatest, toPublicMeasurement } from "@/lib/r
 const mapMock = vi.hoisted(() => ({
   fail: false,
   events: new EventTarget(),
+  create: vi.fn(),
+  fitBounds: vi.fn(),
   setLngLat: vi.fn(),
   setData: vi.fn(),
   addSource: vi.fn(),
@@ -19,12 +21,13 @@ vi.mock("maplibre-gl", () => ({
   setWorkerUrl: vi.fn(),
   Map: class {
     constructor(readonly options: { container: HTMLElement }) {
+      mapMock.create(options);
       if (mapMock.fail) throw new Error("WebGL unavailable");
       options.container.classList.add("maplibregl-map");
     }
     touchZoomRotate = { disableRotation: vi.fn() };
     addControl = vi.fn();
-    fitBounds = vi.fn();
+    fitBounds = mapMock.fitBounds;
     remove = vi.fn();
     on = mapMock.events.addEventListener.bind(mapMock.events);
     off = mapMock.events.removeEventListener.bind(mapMock.events);
@@ -97,6 +100,8 @@ describe("measurement explorer", () => {
     items = await fixtureItems();
     mapMock.fail = false;
     mapMock.events = new EventTarget();
+    mapMock.create.mockClear();
+    mapMock.fitBounds.mockClear();
     mapMock.setLngLat.mockClear();
     mapMock.setData.mockClear();
     mapMock.addSource.mockClear();
@@ -106,7 +111,7 @@ describe("measurement explorer", () => {
   function addPublishedPositions() {
     // Shardlow and Kegworth from the RDP #129 catalogue example.
     for (const { measurement } of items) {
-      if (measurement.name === "Shardlow") {
+      if (measurement.measurementId === "ea-shardlow-level") {
         measurement.position = { longitude: -1.335368, latitude: 52.865431, precisionMetres: 10 };
         measurement.watercourseName = "River Trent";
         measurement.locationEvidence =
@@ -123,11 +128,13 @@ describe("measurement explorer", () => {
     addPublishedPositions();
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
-    expect(mapMock.setLngLat).not.toHaveBeenCalled();
-    await user.click(screen.getByText("Station map"));
-    const map = within(await screen.findByRole("region", { name: "Station locations" }));
+    const mapRegion = screen.getByRole("region", { name: "Station locations" });
+    const map = within(mapRegion);
     const shardlow = await map.findByRole("button", { name: "Shardlow" });
     expect(map.getAllByRole("button")).toHaveLength(2);
+    expect(mapMock.create).toHaveBeenCalledWith(
+      expect.objectContaining({ bounds: expect.anything() }),
+    );
     expect(mapMock.setLngLat).toHaveBeenCalledWith([-1.335368, 52.865431]);
     expect(screen.getByRole("link", { name: "Stone Rainfall" })).toBeInTheDocument();
 
@@ -152,6 +159,7 @@ describe("measurement explorer", () => {
     expect(details.getByRole("link", { name: "Water level" })).toHaveFocus();
 
     await user.click(screen.getByRole("radio", { name: "Flow" }));
+    expect(map.getByRole("button", { name: "Shardlow" })).toBeInTheDocument();
     expect(map.queryByRole("button", { name: "Kegworth" })).not.toBeInTheDocument();
     expect(details.queryByRole("link", { name: "Water level" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
@@ -160,8 +168,28 @@ describe("measurement explorer", () => {
     await user.click(screen.getByRole("radio", { name: "All" }));
     await user.type(screen.getByRole("searchbox"), "stone");
     expect(screen.getByText("No matching stations have verified locations")).toBeInTheDocument();
+    expect(map.queryByRole("button")).not.toBeInTheDocument();
+    const list = screen.getByRole("region", { name: "Stations" });
+    expect(within(list).getByRole("link", { name: "Stone Rainfall" })).toBeInTheDocument();
+
+    await user.clear(screen.getByRole("searchbox"));
+    expect(screen.getByRole("region", { name: "Station locations" })).toBe(mapRegion);
+    expect(map.getAllByRole("button")).toHaveLength(2);
+    expect(details.queryByRole("heading")).not.toBeInTheDocument();
+    expect(mapMock.create).toHaveBeenCalledTimes(1);
+    expect(mapMock.fitBounds).not.toHaveBeenCalled();
+  });
+
+  it("starts with list results when the URL filters out all verified locations", async () => {
+    addPublishedPositions();
+    window.history.replaceState(null, "", "/?q=stone");
+    const user = userEvent.setup();
+    render(<MeasurementExplorer items={items} initialQuery={{ q: "stone", type: null }} />);
+    expect(screen.getByRole("link", { name: "Stone Rainfall" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Station locations" })).not.toBeInTheDocument();
-    expect(links()).toEqual(["Stone Rainfall"]);
+    expect(mapMock.create).not.toHaveBeenCalled();
+    await user.clear(screen.getByRole("searchbox"));
+    expect(await screen.findByRole("button", { name: "Shardlow" })).toBeInTheDocument();
   });
 
   it.each(["WebGL", "tiles"])("keeps discovery usable when %s is unavailable", async (failure) => {
@@ -169,7 +197,6 @@ describe("measurement explorer", () => {
     mapMock.fail = failure === "WebGL";
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
-    await user.click(screen.getByText("Station map"));
     if (failure === "tiles") {
       const marker = await screen.findByRole("button", { name: "Shardlow" });
       act(() => mapMock.events.dispatchEvent(new Event("error")));
@@ -225,7 +252,6 @@ describe("measurement explorer", () => {
       }),
     );
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
-    await user.click(screen.getByText("Station map"));
     const map = screen.getByRole("region", { name: "Station locations" });
     const marker = await within(map).findByRole("button", { name: "Shardlow" });
     act(() => mapMock.events.dispatchEvent(new Event("load")));
@@ -300,7 +326,6 @@ describe("measurement explorer", () => {
     );
     fetchTrace.mockResolvedValueOnce(new Response(null, { status: 504 }));
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
-    await user.click(screen.getByText("Station map"));
     await user.click(await screen.findByRole("button", { name: "Trace river" }));
     mapClick(screen.getByRole("region", { name: "Station locations" }));
     expect(fetchTrace.mock.calls[0][0]).toBe(
@@ -352,7 +377,6 @@ describe("measurement explorer", () => {
         ),
       );
       render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
-      await user.click(screen.getByText("Station map"));
       await user.click(await screen.findByRole("button", { name: "Trace river" }));
       act(() => mapMock.events.dispatchEvent(new Event("load")));
       mapClick(screen.getByRole("region", { name: "Station locations" }));

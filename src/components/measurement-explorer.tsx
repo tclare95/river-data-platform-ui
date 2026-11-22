@@ -45,20 +45,31 @@ export function MeasurementExplorer({
   const [q, setQ] = useState(start.q);
   const types = useMemo(() => typeOptions(items), [items]);
   const [type, setType] = useState(start.type && types.includes(start.type) ? start.type : null);
-  const [mapOpen, setMapOpen] = useState(false);
   const searchId = useId();
+  const listId = useId();
 
   const results = useMemo(() => filterItems(items, { q, type }), [items, q, type]);
   const groups = useMemo(() => groupByStation(results), [results]);
-  const hasLocations = items.some(({ measurement }) => measurement.position !== undefined);
+  const locations = useMemo(
+    () =>
+      new Map(
+        items.flatMap(({ measurement: { stationId, position, locationEvidence, source } }) =>
+          position ? [[stationId, { position, locationEvidence, source }] as const] : [],
+        ),
+      ),
+    [items],
+  );
   const stations = useMemo(
     () =>
       groups.flatMap((group) => {
-        const { position, locationEvidence, source } = group.items[0].measurement;
-        return position ? [{ ...group, position, locationEvidence, source }] : [];
+        const location = locations.get(group.stationId);
+        return location ? [{ ...group, ...location }] : [];
       }),
-    [groups],
+    [groups, locations],
   );
+  // Once initialized, keep the map and its viewport through filters with no mapped results.
+  const [mapStarted, setMapStarted] = useState(stations.length > 0);
+  if (!mapStarted && stations.length > 0) setMapStarted(true);
   const filtered = q.trim() !== "" || type !== null;
 
   useEffect(() => {
@@ -99,9 +110,9 @@ export function MeasurementExplorer({
         action="/"
         method="get"
         onSubmit={(event) => event.preventDefault()}
-        className="space-y-4"
+        className="space-y-4 lg:flex lg:flex-wrap lg:items-end lg:gap-x-6 lg:gap-y-4 lg:space-y-0"
       >
-        <div>
+        <div className="lg:w-full lg:max-w-lg">
           <label htmlFor={searchId} className="block text-sm font-medium">
             Search
           </label>
@@ -147,57 +158,55 @@ export function MeasurementExplorer({
         </noscript>
       </form>
 
-      <p className="mt-6 text-sm text-ink-muted">{count}</p>
+      <div className="mt-4 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+        <p className="text-ink-muted">{count}</p>
+        {mapStarted ? (
+          <a
+            href={`#${listId}`}
+            className="link lg:sr-only lg:focus:not-sr-only [@media(scripting:none)]:hidden"
+          >
+            Browse stations
+          </a>
+        ) : null}
+      </div>
       {/* Announced once typing pauses, not on every keystroke. */}
       <p role="status" className="sr-only">
         {announcement}
       </p>
 
-      {hasLocations ? (
-        <details
-          className="mt-3 rounded-lg border border-line bg-surface"
-          onToggle={(event) => setMapOpen(event.currentTarget.open)}
-        >
-          <summary className="cursor-pointer rounded-lg px-5 py-3 font-medium text-accent sm:px-6">
-            Station map
-          </summary>
-          {mapOpen &&
-            (stations.length ? (
-              <StationMap stations={stations} />
-            ) : (
-              <EmptyState title="No matching stations have verified locations" />
-            ))}
-          <noscript>
-            <p className="px-5 pb-3 text-sm text-ink-muted">
-              The map requires JavaScript. Browse the measurements below.
-            </p>
-          </noscript>
-        </details>
-      ) : null}
-
-      <div className="mt-3">
-        {groups.length > 0 ? (
-          <MeasurementList groups={groups} />
-        ) : (
-          <EmptyState
-            title="No matching measurements"
-            // A real link, so it also clears a script-free GET search.
-            action={
-              <Link
-                href="/"
-                onClick={(event) => {
-                  event.preventDefault();
-                  reset();
-                }}
-                className="inline-flex min-h-10 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium transition-colors hover:bg-canvas"
-              >
-                Clear search
-              </Link>
-            }
-          >
-            Try a station, river or measurement type.
-          </EmptyState>
-        )}
+      <div className="mt-3 flex flex-col gap-5 lg:flex-row lg:items-start">
+        {mapStarted ? (
+          <div className="min-w-0 lg:w-2/3 lg:shrink-0 [@media(scripting:none)]:hidden">
+            <StationMap stations={stations} />
+          </div>
+        ) : null}
+        <section aria-labelledby={listId} className="@container min-w-0 flex-1">
+          <h2 id={listId} tabIndex={-1} className="mb-3 text-lg font-semibold">
+            Stations
+          </h2>
+          {groups.length > 0 ? (
+            <MeasurementList groups={groups} />
+          ) : (
+            <EmptyState
+              title="No matching measurements"
+              // A real link, so it also clears a script-free GET search.
+              action={
+                <Link
+                  href="/"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    reset();
+                  }}
+                  className="inline-flex min-h-10 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium transition-colors hover:bg-canvas"
+                >
+                  Clear search
+                </Link>
+              }
+            >
+              Try a station, river or measurement type.
+            </EmptyState>
+          )}
+        </section>
       </div>
     </>
   );

@@ -13,7 +13,7 @@ export function MeasurementList({ groups }: { groups: readonly StationGroup[] })
           className="overflow-hidden rounded-lg border border-line bg-surface"
         >
           <div className="px-5 pt-4 pb-3 sm:px-6">
-            <h2 className="text-lg font-semibold tracking-tight">{group.name}</h2>
+            <h3 className="text-lg font-semibold tracking-tight">{group.name}</h3>
             {group.watercourseName ? (
               <p className="text-sm text-ink-muted">{group.watercourseName}</p>
             ) : null}
@@ -24,7 +24,7 @@ export function MeasurementList({ groups }: { groups: readonly StationGroup[] })
                 key={measurement.measurementId}
                 className="relative transition-colors hover:bg-canvas"
               >
-                <div className="flex flex-col gap-1 px-5 py-3.5 sm:grid sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-baseline sm:gap-6 sm:px-6">
+                <div className="flex flex-col gap-1 px-5 py-3.5 sm:px-6 @lg:grid @lg:grid-cols-[11rem_minmax(0,1fr)] @lg:items-baseline @lg:gap-6">
                   {/* The link's ::after covers the row, so the whole row is one target and one tab stop. */}
                   <Link
                     href={measurementPath(measurement.measurementId)}

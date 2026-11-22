@@ -8,7 +8,7 @@ The authoritative requirements live in RDP's [River Explorer OpenSpec](https://g
 
 **Discover a published measurement → open a detail page → see the latest actual observation → inspect a bounded historical chart and accessible table.**
 
-- Discovery: simple list/search by available station, parameter and river metadata. An accessible list always works without a map.
+- Discovery: a map of verified station locations with search by available station, parameter and river metadata. The station list includes all matching stations and works without a map.
 - Detail: human-readable station name, original unit/datum, last observed time and freshness. Show no-observation, stale, unavailable and error states honestly.
 - History: initially a bounded week/month window; preserve gaps, source times and coverage uncertainty. Do not interpolate missing readings.
 - Attribution: source and original measurement provenance remain visible without distracting from the data.

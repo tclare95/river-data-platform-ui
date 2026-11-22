@@ -49,18 +49,16 @@ describe("home page", () => {
     expect(screen.getByRole("searchbox", { name: "Search" })).toBeInTheDocument();
   });
 
-  it("summarises what is published from the catalogue itself", async () => {
+  it("counts published measurements and stations", async () => {
     await renderHome();
-    expect(
-      screen.getByText("Water level, flow and rainfall measurements from the Environment Agency."),
-    ).toBeInTheDocument();
     expect(screen.getByText("7 measurements at 6 stations")).toBeInTheDocument();
   });
 
   it("groups measurements under their station", async () => {
     const section = await renderHome();
-    const stations = within(section)
-      .getAllByRole("heading", { level: 2 })
+    const list = within(section).getByRole("region", { name: "Stations" });
+    const stations = within(list)
+      .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent);
     expect(stations).toEqual([
       "Colwick",
