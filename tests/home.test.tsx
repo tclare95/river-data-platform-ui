@@ -116,7 +116,7 @@ describe("home page", () => {
     expect(screen.getByRole("searchbox")).toHaveValue("shardlow");
     expect(screen.getByRole("radio", { name: "Flow" })).toBeChecked();
     expect(
-      within(section)
+      within(within(section).getByRole("region", { name: "Stations" }))
         .getAllByRole("link")
         .map((link) => link.textContent),
     ).toEqual(["Shardlow Flow"]);
@@ -140,6 +140,7 @@ describe("home page", () => {
     );
     expect(section.textContent).not.toMatch(READING);
     expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.getByRole("region", { name: "River map" })).toBeInTheDocument();
   });
 
   it("keeps the catalogue but marks latest unavailable when the latest read fails", async () => {
@@ -166,5 +167,6 @@ describe("home page", () => {
     const section = await renderHome();
     expect(section).toHaveTextContent("No measurements to show yet");
     expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.getByRole("region", { name: "River map" })).toBeInTheDocument();
   });
 });

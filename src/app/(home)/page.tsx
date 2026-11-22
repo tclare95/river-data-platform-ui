@@ -3,9 +3,9 @@ import { PageMain } from "@/components/container";
 import { MeasurementExplorer } from "@/components/measurement-explorer";
 import { PageHeader } from "@/components/page-header";
 import { Attribution, FixtureNote } from "@/components/provenance";
-import { EmptyState, ErrorState } from "@/components/states";
 import { readCompareQuery } from "@/lib/compare";
 import { readQuery } from "@/lib/discovery";
+import { readMapContext } from "@/lib/map-context";
 import { loadOverview } from "@/lib/overview";
 
 export default async function HomePage({ searchParams }: PageProps<"/">) {
@@ -16,23 +16,19 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
     <PageMain>
       <PageHeader title="Explore river data" />
       <section aria-label="Measurements" className="mt-6">
-        {overview.status === "unavailable" ? (
-          <ErrorState title="Measurements are unavailable right now">
-            Please try again in a few minutes.
-          </ErrorState>
-        ) : overview.items.length === 0 ? (
-          <EmptyState title="No measurements to show yet" />
-        ) : (
-          <>
-            {overview.mode === "fixture" ? <FixtureNote className="mb-6" /> : null}
-            <MeasurementExplorer
-              items={overview.items}
-              initialQuery={readQuery(params)}
-              initialComparison={readCompareQuery(params)}
-            />
-            <Attribution measurements={overview.items.map((item) => item.measurement)} />
-          </>
-        )}
+        {overview.status === "ok" && overview.mode === "fixture" && overview.items.length > 0 ? (
+          <FixtureNote className="mb-6" />
+        ) : null}
+        <MeasurementExplorer
+          items={overview.status === "ok" ? overview.items : []}
+          catalogueUnavailable={overview.status === "unavailable"}
+          initialQuery={readQuery(params)}
+          initialComparison={readCompareQuery(params)}
+          initialMapContext={readMapContext(params)}
+        />
+        {overview.status === "ok" && overview.items.length > 0 ? (
+          <Attribution measurements={overview.items.map((item) => item.measurement)} />
+        ) : null}
       </section>
     </PageMain>
   );
