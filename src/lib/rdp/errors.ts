@@ -6,6 +6,8 @@ export type RdpErrorCode =
   | "CONFIGURATION_ERROR"
   | "INVALID_QUERY"
   | "MEASUREMENT_NOT_FOUND"
+  | "CATCHMENT_DISCOVERY_DISABLED"
+  | "RELEASE_NOT_AVAILABLE"
   | "INVALID_CURSOR"
   | "CURSOR_EXPIRED"
   | "CURSOR_STALE"
@@ -56,6 +58,8 @@ export function errorFromResponse(status: number, body: unknown): RdpError {
     typeof body === "object" && body !== null && "error" in body
       ? (body as { error?: { code?: unknown } }).error?.code
       : undefined;
+  if (status === 410 && code === "RELEASE_NOT_AVAILABLE")
+    return new RdpError("RELEASE_NOT_AVAILABLE", status);
   return new RdpError(
     (typeof code === "string" && UPSTREAM_CODES.get(code)) || "UPSTREAM_ERROR",
     status,

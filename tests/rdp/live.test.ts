@@ -177,6 +177,7 @@ describe("live signed transport", () => {
 
   it.each([
     "/v1/river/locate",
+    "/v1/river/upstream-measurements",
     "/v1/river/releases/0123456789abcdef/basins/42/samples/123/upstream",
     "/v1/river/releases/0123456789abcdef/basins/42/samples/123/downstream",
   ])("signs %s using the existing role and response bounds", async (path) => {
@@ -197,6 +198,7 @@ describe("live signed transport", () => {
     "/v1/cso/outfalls",
     "/v1/measurements/x/backfills",
     "/v1/river/upstream",
+    "/v1/river/upstream-measurements/extra",
     "/v1/river/releases/0123456789abcdef/basins/../samples/123/upstream",
     "/v1/river/releases/0123456789abcdef/basins/42/samples/123/upstream-outfalls",
   ])("refuses to sign %s", async (path) => {
@@ -205,5 +207,33 @@ describe("live signed transport", () => {
       code: "INVALID_QUERY",
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("aborts an active signed discovery read without retrying", async () => {
+    const controller = new AbortController();
+    const fetch = vi.fn((_url: string, { signal }: RequestInit) => {
+      queueMicrotask(() => controller.abort());
+      return new Promise<Response>((_resolve, reject) => {
+        signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    });
+    const transport = createLiveTransport(CONFIG, {
+      fetch: fetch as never,
+      assumeRole: async () => CREDENTIALS,
+      getToken: async () => "t",
+      now: () => NOW,
+    });
+    await expect(
+      transport({
+        path: "/v1/river/upstream-measurements",
+        query: { lon: "-1.25", lat: "52.5", release: "0123456789abcdef" },
+        timeoutMs: 10_000,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ code: "TIMEOUT" });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(new URL(fetch.mock.calls[0][0]).search).toBe(
+      "?lon=-1.25&lat=52.5&release=0123456789abcdef",
+    );
   });
 });

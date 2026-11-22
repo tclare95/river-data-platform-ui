@@ -1,4 +1,5 @@
 import "server-only";
+import { fail as invalid, object, oneOf } from "./contract";
 import { RdpError } from "./errors";
 
 export const RIVER_LOCATE_PATH = "/v1/river/locate";
@@ -24,7 +25,7 @@ type RiverCatchment = {
 const CATCHMENT_DATASET = "OpenRiversNetwork (ORN) v2.0 with ORN Catchments";
 const CATCHMENT_SOURCE_RELEASE =
   "ORN v2.0 GeoPackage (2025-03); network corrected from OS Open Rivers as downloaded 2023-02-09";
-const MATCH_STATUSES = ["Matched", "Ambiguous", "NoMatch", "OutOfCoverage"] as const;
+export const parseRiverMatchStatus = oneOf(["Matched", "Ambiguous", "NoMatch", "OutOfCoverage"]);
 const RELEASE_ID = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const VERSION = /^[a-f0-9]{64}$/;
 const DECIMAL = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/;
@@ -37,21 +38,13 @@ export function isRiverCoordinate(value: unknown, limit: number): value is strin
   return (
     typeof value === "string" &&
     value.length <= 32 &&
+    value.trim() === value &&
     DECIMAL.test(value) &&
     Math.abs(Number(value)) <= limit
   );
 }
 
-function invalid(): never {
-  throw new RdpError("RESPONSE_CONTRACT_ERROR");
-}
-
-function object(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) invalid();
-  return value as Record<string, unknown>;
-}
-
-function position(value: unknown): Position {
+export function parseRiverPosition(value: unknown): Position {
   if (!Array.isArray(value) || value.length !== 2) invalid();
   const [lon, lat] = value;
   if (
@@ -75,21 +68,25 @@ export function riverSamplePath(
   return path;
 }
 
-export function parseRiverLocation(body: unknown) {
-  const data = object(object(body).data);
-  const match = object(data.match);
-  const status = MATCH_STATUSES.find((value) => value === match.status);
-  const { releaseId, version, token } = object(data.release);
+export function parseRiverRelease(value: unknown) {
+  const { releaseId, version, token } = object(value);
   if (
-    !status ||
     typeof releaseId !== "string" ||
+    releaseId.trim() !== releaseId ||
     !RELEASE_ID.test(releaseId) ||
     typeof version !== "string" ||
+    version.length !== 64 ||
     !VERSION.test(version) ||
     token !== version.slice(0, 16)
   )
     invalid();
-  const location = { status, release: { releaseId, version }, token: version.slice(0, 16) };
+  return { release: { releaseId, version }, token: version.slice(0, 16) };
+}
+
+export function parseRiverLocation(body: unknown) {
+  const data = object(object(body).data);
+  const status = parseRiverMatchStatus(object(data.match).status);
+  const location = { status, ...parseRiverRelease(data.release) };
   if (data.sample === null) {
     if (data.links !== null) invalid();
     return { ...location, sample: null };
@@ -115,7 +112,7 @@ export function parseRiverLocation(body: unknown) {
   }
   return {
     ...location,
-    sample: { basinId, sampleId, position: position(coordinates), snapOffsetM },
+    sample: { basinId, sampleId, position: parseRiverPosition(coordinates), snapOffsetM },
   };
 }
 
@@ -123,7 +120,7 @@ export type RiverLocation = ReturnType<typeof parseRiverLocation>;
 
 function positions(value: unknown, min: number): Position[] {
   if (!Array.isArray(value) || value.length < min) invalid();
-  return value.map(position);
+  return value.map(parseRiverPosition);
 }
 
 function polygon(value: unknown): PolygonCoordinates {
@@ -232,7 +229,7 @@ export function parseRiverRoute(
     }
     const { type, coordinates } = object(feature.geometry);
     if (type === "Point" && kind === "query-point" && !snapped) {
-      snapped = position(coordinates);
+      snapped = parseRiverPosition(coordinates);
     } else if (type === "LineString" && kind === `${direction}-reach` && geometry === "reaches") {
       reaches.push(positions(coordinates, 2));
     } else invalid();

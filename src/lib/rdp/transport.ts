@@ -8,10 +8,26 @@ export type RdpRequest = {
   /** Whole-call budget including credentials and the single retry. */
   timeoutMs: number;
   maxResponseBytes?: number;
+  signal?: AbortSignal;
 };
 
 /** Resolves a 2xx JSON body or throws an `RdpError`. Fixture and live transports share this shape. */
 export type RdpTransport = (request: RdpRequest) => Promise<unknown>;
+
+/** Stop waiting for shared work without cancelling it for other callers. */
+export async function waitForRdp<T>(load: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw new RdpError("TIMEOUT");
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new RdpError("TIMEOUT"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([aborted, load()]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
 
 /** RDP caps a serialized body at 4 MiB; anything larger is refused rather than buffered. */
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024 + 64 * 1024;
@@ -72,6 +88,7 @@ export async function withDeadlineAndRetry(
     random?: () => number;
     now?: () => number;
     maxResponseBytes?: number;
+    signal?: AbortSignal;
   } = {},
 ): Promise<unknown> {
   const retry = options.retry ?? DEFAULT_RETRY;
@@ -79,6 +96,9 @@ export async function withDeadlineAndRetry(
   const random = options.random ?? Math.random;
   const sleep = options.sleep ?? abortableSleep;
   const controller = new AbortController();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, controller.signal])
+    : controller.signal;
   const deadline = now() + timeoutMs;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -86,10 +106,13 @@ export async function withDeadlineAndRetry(
       let failure: RdpError;
       let retryAfterMs = 0;
       try {
-        const response = await attempt(controller.signal);
+        if (signal.aborted) throw new RdpError("TIMEOUT");
+        const response = await attempt(signal);
         if (response.ok) {
           try {
-            return await readBoundedJson(response, options.maxResponseBytes);
+            const body = await readBoundedJson(response, options.maxResponseBytes);
+            if (signal.aborted) throw new RdpError("TIMEOUT");
+            return body;
           } catch (error) {
             throw error instanceof RdpError
               ? error
@@ -102,7 +125,7 @@ export async function withDeadlineAndRetry(
         } catch {
           // Error bodies are optional and AWS-defined at the gateway; the status alone is enough.
         }
-        if (controller.signal.aborted) throw new RdpError("TIMEOUT");
+        if (signal.aborted) throw new RdpError("TIMEOUT");
         failure = errorFromResponse(response.status, body);
         const header = Number(response.headers.get("retry-after"));
         retryAfterMs =
@@ -110,7 +133,7 @@ export async function withDeadlineAndRetry(
             ? Math.min(retry.maxRetryAfterMs, header * 1000)
             : 0;
       } catch (error) {
-        if (controller.signal.aborted) throw new RdpError("TIMEOUT");
+        if (signal.aborted) throw new RdpError("TIMEOUT");
         failure = error instanceof RdpError ? error : new RdpError("NETWORK_ERROR");
       }
       const backoff = Math.max(retryAfterMs, 200 + Math.floor(random() * 300));
@@ -121,10 +144,10 @@ export async function withDeadlineAndRetry(
       ) {
         throw failure;
       }
-      await sleep(backoff, controller.signal);
+      await sleep(backoff, signal);
     }
   } catch (error) {
-    if (controller.signal.aborted && !(error instanceof RdpError && error.code !== "TIMEOUT")) {
+    if (signal.aborted) {
       throw new RdpError("TIMEOUT");
     }
     throw error instanceof RdpError ? error : new RdpError("NETWORK_ERROR");

@@ -97,6 +97,49 @@ Live signed access is awaiting verification. The stage needs the River Lambda re
 UI role and that role's `--ui --river` caller policy applied before a signed smoke from the corresponding Vercel
 environment. See the [RDP rollout instructions](https://github.com/tclare95/river-data-platform/blob/main/docs/PRODUCTION-READ-API.md#rdp-ui-caller).
 
+### Catchment measurement discovery
+
+`GET /api/river/upstream-measurements?lon=&lat=&release=` takes one WGS84 point and an optional
+16-character lowercase hex token. Pass the first 16 characters of the displayed River Tracer release
+digest to pin discovery to that release. Requests and responses use no-store. Cancel the fetch when the
+point or release changes and ignore any result from the previous selection.
+
+- `data.status` is `available`, `location_not_matched` or `catchment_unavailable`. Keep station browsing
+  available in all three cases. An available result can have zero publicly displayable measurements.
+- Available results carry the catchment ID (scoped to the release), area and the along-river pour-point
+  offset including the canonical snap. A downstream pour point can include river below the selected point.
+  Station groups contain `geographicRelationship: "within_catchment"` and approved measurements with
+  canonical IDs suitable for detail and comparison. Level and flow have `networkRelationship: "not_assessed"`
+  and rainfall has `"not_applicable"`. `networkCoverage.completeness` describes the tracer's upstream
+  trace from its canonical sample.
+- `meta.complete` and `meta.counts` describe RDP's stage-wide published rainfall, level and flow station
+  scope. `unknown`, `ambiguous` and `nearBoundary` stations are excluded from candidates and make that
+  scope incomplete. Counts are aggregate station counts. The displayed groups can be fewer because
+  the UI requires each measurement to match an approved catalogue entry and its verified position.
+- Fixed failures are `INVALID_REQUEST` (400), `DISABLED` (404 from the RDP ReadApi envelope),
+  `RELEASE_NOT_AVAILABLE` (410, re-run River Tracer locate), `RESULT_TOO_LARGE` (413),
+  `CANCELLED` (499), `UNAVAILABLE` (503) and `TIMEOUT` (504).
+
+Discovery adds one exact signed GET using the shared limiter, retry policy and credential exchange. It reads
+the cached published catalogue only for available results. Discovery is uncached, checks the 40-measurement
+RDP ceiling and caps incoming and outgoing discovery JSON at 256 KiB. It allows 20 seconds for the signed
+read and 25 seconds for the application request, including any catalogue wait. The browser aborts the
+unshared signed read through the request signal. Shared catalogue loads retain their own budget.
+
+Live availability is unverified. RDP PR #149 ships with both stages default-off. For each stage, the operator
+must verify the pinned River Tracer release is available, apply the reviewed Read Lambda boundary rendered
+with `--river-api` and UI caller policy rendered with `--ui --river`, and release the stage with
+`catchment_measurements: true` if still disabled. Include this application route in the Vercel Firewall
+rate-limit rule. See the [RDP activation contract](https://github.com/tclare95/river-data-platform/blob/2371698f6cb1ab8a3a9499c26b3efc9f635b667e/docs/READ-API.md#catchment-measurement-discovery).
+
+Run the signed smoke from the Vercel UI Preview against staging and repeat from Production against production
+after its separate activation. Using that environment's existing OIDC → STS UI role, sign
+`GET /v1/river/locate?lon=-1.07846&lat=52.95344` at Colwick. Take its returned token and sign
+`GET /v1/river/upstream-measurements?lon=-1.07846&lat=52.95344&release=<token>`; expect 200
+`available` and the same release. Repeat with a well-formed token different from the active one and expect
+410 `RELEASE_NOT_AVAILABLE`. Verify the Next.js response shows only approved catalogue IDs and the coverage
+counts. The fixture suite uses synthetic RDP responses and does not depend on these stage checks.
+
 ## Measurement history
 
 `src/lib/history/` owns the detail page's history read; nothing in it derives freshness or coverage.
