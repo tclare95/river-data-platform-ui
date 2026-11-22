@@ -5,11 +5,13 @@ import { RdpError, errorFromResponse } from "@/lib/rdp/errors";
 import type { RdpRequest } from "@/lib/rdp/transport";
 import {
   attribution,
+  catchmentRing,
   locateFixture,
   reach,
   routeFixture,
   samplePath,
   snapped,
+  sourceNetworkRelease,
   unavailable,
   version,
 } from "./river-tracer-fixtures";
@@ -48,6 +50,13 @@ describe("River Tracer application endpoint", () => {
         route: { direction: "upstream", completeness: "incomplete" },
         attribution,
         geometry: { type: "MultiLineString", coordinates: [reach] },
+        catchment: {
+          status: "published",
+          areaKm2: 12.5,
+          pourPointOffsetM: 25,
+          sourceNetworkRelease,
+          geometry: { type: "Polygon", coordinates: [catchmentRing] },
+        },
       },
     });
     await GET(request("lon=-1.24&lat=52.5&direction=upstream"));
@@ -60,7 +69,9 @@ describe("River Tracer application endpoint", () => {
 
   it("reads downstream from the canonical sample", async () => {
     const transport = fixtureTransport(locateFixture(), routeFixture("downstream"));
-    expect((await GET(request("lon=-1&lat=52&direction=downstream"))).status).toBe(200);
+    const response = await GET(request("lon=-1&lat=52&direction=downstream"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.catchment).toBeNull();
     expect(transport.mock.calls[1][0].path).toBe(`${samplePath}/downstream`);
   });
 
@@ -76,6 +87,7 @@ describe("River Tracer application endpoint", () => {
         route: null,
         geometry: null,
         attribution: null,
+        catchment: null,
       });
       expect(transport).toHaveBeenCalledOnce();
     },
@@ -95,8 +107,115 @@ describe("River Tracer application endpoint", () => {
       snappedSample: { position: null, snapOffsetM: 17 },
       attribution,
       release: { version: otherVersion },
+      catchment: { status: "published", areaKm2: 12.5, pourPointOffsetM: 25, geometry: null },
     });
     expect(transport.mock.calls[1][0].query).toEqual({ geometry: "none" });
+  });
+
+  it("withholds catchment geometry from an unapproved source on the pinned release", async () => {
+    const route = routeFixture();
+    route.riverTracer.network.dataset = "private-source";
+    route.riverTracer.network.release = "private-release";
+    fixtureTransport(locateFixture(), route);
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toMatchObject({
+      geometry: { type: "MultiLineString", coordinates: [reach] },
+      catchment: { status: "published", sourceNetworkRelease: null, geometry: null },
+    });
+  });
+
+  const hole = [
+    [-1.2, 52.4],
+    [-1.2, 52.2],
+    [-1.1, 52.2],
+    [-1.2, 52.4],
+  ];
+  const otherRing = [
+    [-1.5, 52.5],
+    [-1.4, 52.5],
+    [-1.4, 52.4],
+    [-1.5, 52.5],
+  ];
+  it.each([
+    { type: "Polygon", coordinates: [catchmentRing, hole] },
+    { type: "MultiPolygon", coordinates: [[catchmentRing, hole], [otherRing]] },
+  ])("preserves all $type rings, including holes", async (geometry) => {
+    const route = routeFixture();
+    route.features[1].geometry = geometry;
+    fixtureTransport(locateFixture(), route);
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.catchment.geometry).toEqual(geometry);
+  });
+
+  it.each(["unavailable", "not-loaded"])(
+    "keeps the %s status without a polygon",
+    async (status) => {
+      const route = routeFixture();
+      route.riverTracer.catchment!.status = status;
+      fixtureTransport(locateFixture(), route);
+      const response = await GET(request());
+      expect(response.status).toBe(200);
+      expect((await response.json()).data.catchment).toEqual({
+        status,
+        areaKm2: null,
+        pourPointOffsetM: null,
+        sourceNetworkRelease,
+        geometry: null,
+      });
+    },
+  );
+
+  it("withholds a polygon with no recognised catchment status", async () => {
+    const route = routeFixture();
+    route.riverTracer.catchment = undefined;
+    fixtureTransport(locateFixture(), route);
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.catchment).toBeNull();
+  });
+
+  it.each([
+    ["missing geometry", null],
+    ["an open ring", [catchmentRing.slice(1)]],
+    ["out-of-range coordinates", [[snapped, [181, 52.5], [-1, 52], snapped]]],
+    ["non-finite coordinates", [[snapped, [NaN, 52.5], [-1, 52], snapped]]],
+  ])("preserves the route and metadata with %s", async (_, coordinates) => {
+    const route = routeFixture();
+    route.features[1].geometry.coordinates = coordinates;
+    fixtureTransport(locateFixture(), route);
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toMatchObject({
+      geometry: { type: "MultiLineString", coordinates: [reach] },
+      catchment: { status: "published", areaKm2: 12.5, pourPointOffsetM: 25, geometry: null },
+    });
+  });
+
+  it("withholds a polygon when metadata is invalid", async () => {
+    const route = routeFixture();
+    route.riverTracer.catchment!.pourPointOffsetM = -1;
+    fixtureTransport(locateFixture(), route);
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.catchment).toMatchObject({
+      status: "published",
+      areaKm2: 12.5,
+      pourPointOffsetM: null,
+      geometry: null,
+    });
+  });
+
+  it("applies the public JSON size cap to the catchment and reaches together", async () => {
+    const route = routeFixture();
+    const point = [-1.2345678901234567, 52.34567890123456];
+    route.features[1].geometry.coordinates = [Array.from({ length: 60_000 }, () => point)];
+    route.features[2].geometry.coordinates = Array.from({ length: 60_000 }, () => point);
+    fixtureTransport(locateFixture(), route);
+    const response = await GET(request());
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: { code: "RESULT_TOO_LARGE" } });
   });
 
   it.each([

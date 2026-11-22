@@ -34,6 +34,11 @@ export async function GET(request: Request) {
     const route = location.sample
       ? await rdp.getRiverRoute(location, direction, publishGeometry ? "reaches" : "none")
       : null;
+    const catchment = route?.catchment;
+    const publishCatchment =
+      publishGeometry &&
+      location.release.releaseId === "orn-v2-gb" &&
+      catchment?.sourceNetworkRelease;
     const body = JSON.stringify({
       mode: rdp.mode,
       data: {
@@ -49,6 +54,15 @@ export async function GET(request: Request) {
         attribution: route?.attribution ?? null,
         geometry:
           publishGeometry && route ? { type: "MultiLineString", coordinates: route.reaches } : null,
+        catchment: catchment
+          ? {
+              status: catchment.status,
+              areaKm2: catchment.areaKm2,
+              pourPointOffsetM: catchment.pourPointOffsetM,
+              sourceNetworkRelease: catchment.sourceNetworkRelease,
+              geometry: publishCatchment ? catchment.geometry : null,
+            }
+          : null,
       },
     });
     if (Buffer.byteLength(body) > MAX_PUBLIC_BYTES) return failure("RESULT_TOO_LARGE", 413);

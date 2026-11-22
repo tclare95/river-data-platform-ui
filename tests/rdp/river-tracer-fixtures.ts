@@ -5,6 +5,9 @@ export const samplePath = `/v1/river/releases/${release.token}/basins/42/samples
 export const snapped = [-1.25, 52.5];
 export const reach = [snapped, [-1.2, 52.4]];
 export const attribution = "Synthetic network attribution";
+export const catchmentRing = [snapped, [-1, 52.5], [-1, 52], [-1.25, 52], snapped];
+export const sourceNetworkRelease =
+  "ORN v2.0 GeoPackage (2025-03); network corrected from OS Open Rivers as downloaded 2023-02-09";
 
 export function locateFixture(status = "Matched", hasSample = status === "Matched") {
   return {
@@ -33,9 +36,7 @@ export function routeFixture(direction = "upstream", geometry = "reaches") {
     type: "FeatureCollection",
     features: [
       feature("Point", snapped, "query-point"),
-      ...(direction === "upstream"
-        ? [feature("Polygon", [[snapped, [-1, 52.5], [-1, 52], snapped]], "catchment")]
-        : []),
+      ...(direction === "upstream" ? [feature("Polygon", [catchmentRing], "catchment")] : []),
       ...(geometry === "reaches" ? [feature("LineString", reach, `${direction}-reach`)] : []),
     ],
     riverTracer: {
@@ -44,6 +45,22 @@ export function routeFixture(direction = "upstream", geometry = "reaches") {
       match: { status: "Matched" },
       releaseVersion: version,
       canonicalSample: { sampleId: "123", reachId: "private-reach" },
+      network: {
+        dataset: "OpenRiversNetwork (ORN) v2.0 with ORN Catchments",
+        release: sourceNetworkRelease,
+        archiveSha256: "private-source-hash",
+      },
+      catchment:
+        direction === "upstream"
+          ? {
+              status: "published",
+              id: "private-catchment",
+              sampleId: "456",
+              areaKm2: 12.5,
+              pourPointOffsetM: 25,
+              selection: "private-selection",
+            }
+          : undefined,
       route: { status: "traced", direction, completeness: "incomplete", reachCount: 1 },
       attribution,
       geometry: geometry === "reaches" ? "reaches" : "omitted",
