@@ -8,6 +8,22 @@ export const RIVER_SAMPLE_PATH =
 export type RiverDirection = "upstream" | "downstream";
 export type RiverGeometry = "reaches" | "none";
 type Position = readonly [longitude: number, latitude: number];
+type PolygonCoordinates = Position[][];
+type CatchmentGeometry =
+  | { type: "Polygon"; coordinates: PolygonCoordinates }
+  | { type: "MultiPolygon"; coordinates: PolygonCoordinates[] };
+type RiverCatchment = {
+  status: "published" | "unavailable" | "not-loaded";
+  areaKm2: number | null;
+  pourPointOffsetM: number | null;
+  sourceNetworkRelease: string | null;
+  geometry: CatchmentGeometry | null;
+};
+
+// The publisher's OGL v3.0 catchment grant is specific to this source layer.
+const CATCHMENT_DATASET = "OpenRiversNetwork (ORN) v2.0 with ORN Catchments";
+const CATCHMENT_SOURCE_RELEASE =
+  "ORN v2.0 GeoPackage (2025-03); network corrected from OS Open Rivers as downloaded 2023-02-09";
 const MATCH_STATUSES = ["Matched", "Ambiguous", "NoMatch", "OutOfCoverage"] as const;
 const RELEASE_ID = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const VERSION = /^[a-f0-9]{64}$/;
@@ -110,14 +126,66 @@ function positions(value: unknown, min: number): Position[] {
   return value.map(position);
 }
 
-function polygon(value: unknown) {
+function polygon(value: unknown): PolygonCoordinates {
   if (!Array.isArray(value) || value.length === 0) invalid();
-  for (const ring of value) {
+  return value.map((ring) => {
     const vertices = positions(ring, 4);
     const [lon, lat] = vertices[0];
     const [endLon, endLat] = vertices[vertices.length - 1];
     if (lon !== endLon || lat !== endLat) invalid();
+    return vertices;
+  });
+}
+
+function parseCatchmentGeometry(value: unknown): CatchmentGeometry | null {
+  try {
+    const { type, coordinates } = object(value);
+    if (type === "Polygon") return { type, coordinates: polygon(coordinates) };
+    if (type === "MultiPolygon" && Array.isArray(coordinates) && coordinates.length > 0)
+      return { type, coordinates: coordinates.map(polygon) };
+    return null;
+  } catch (error) {
+    // An invalid catchment must not invalidate an otherwise valid reach trace.
+    if (error instanceof RdpError) return null;
+    throw error;
   }
+}
+
+function parseCatchment(
+  metadata: unknown,
+  network: unknown,
+  features: unknown[],
+): RiverCatchment | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const { status, areaKm2, pourPointOffsetM } = metadata as Record<string, unknown>;
+  if (status !== "published" && status !== "unavailable" && status !== "not-loaded") return null;
+
+  const source = network as Record<string, unknown> | null | undefined;
+  const sourceNetworkRelease =
+    source?.dataset === CATCHMENT_DATASET && source.release === CATCHMENT_SOURCE_RELEASE
+      ? CATCHMENT_SOURCE_RELEASE
+      : null;
+  const area =
+    status === "published" && typeof areaKm2 === "number" && Number.isFinite(areaKm2) && areaKm2 > 0
+      ? areaKm2
+      : null;
+  const offset =
+    status === "published" &&
+    typeof pourPointOffsetM === "number" &&
+    Number.isFinite(pourPointOffsetM) &&
+    pourPointOffsetM >= 0
+      ? pourPointOffsetM
+      : null;
+  return {
+    status,
+    areaKm2: area,
+    pourPointOffsetM: offset,
+    sourceNetworkRelease,
+    geometry:
+      area !== null && offset !== null && features.length === 1
+        ? parseCatchmentGeometry(features[0])
+        : null,
+  };
 }
 
 export function parseRiverRoute(
@@ -153,25 +221,20 @@ export function parseRiverRoute(
 
   let snapped: Position | undefined;
   const reaches: Position[][] = [];
+  const catchmentFeatures: unknown[] = [];
   for (const value of collection.features) {
     const feature = object(value);
-    const { type, coordinates } = object(feature.geometry);
     const { kind } = object(feature.properties);
     if (feature.type !== "Feature") invalid();
+    if (direction === "upstream" && kind === "catchment") {
+      catchmentFeatures.push(feature.geometry);
+      continue;
+    }
+    const { type, coordinates } = object(feature.geometry);
     if (type === "Point" && kind === "query-point" && !snapped) {
       snapped = position(coordinates);
     } else if (type === "LineString" && kind === `${direction}-reach` && geometry === "reaches") {
       reaches.push(positions(coordinates, 2));
-    } else if (type === "Polygon" && direction === "upstream" && kind === "catchment") {
-      polygon(coordinates);
-    } else if (
-      type === "MultiPolygon" &&
-      direction === "upstream" &&
-      kind === "catchment" &&
-      Array.isArray(coordinates) &&
-      coordinates.length > 0
-    ) {
-      for (const part of coordinates) polygon(part);
     } else invalid();
   }
   if (
@@ -188,6 +251,10 @@ export function parseRiverRoute(
     sample: { sampleId: sample.sampleId, position: snapped },
     attribution,
     reaches,
+    catchment:
+      direction === "upstream"
+        ? parseCatchment(meta.catchment, meta.network, catchmentFeatures)
+        : null,
   };
 }
 

@@ -67,10 +67,17 @@ RDP-UI publication approval covers the pinned `orn-v2-gb` release
 attribution with geometry withheld. The publisher FAQ says OGL v3.0 and the homepage also refers to ODbL and DbCL
 below its reference to the points layer. RDP's release evidence still records the terms as unresolved. Maintainer
 confirmation for the exact March 2025 v2 GeoPackage reach and sample layers would reconcile the notices and confirm
-the required attribution and any database reuse obligations. The public projection strips catchments, source feature
-properties, sample identifiers and upstream links. See the [publisher FAQ](https://openrivers.net/faqs/),
+the required attribution and any database reuse obligations. See the [publisher FAQ](https://openrivers.net/faqs/),
 [publisher homepage](https://openrivers.net/) and
 [RDP release evidence](https://github.com/tclare95/river-data-platform/blob/main/docs/RIVER-TRACER.md).
+
+Upstream traces preserve the catchment status (`published`, `unavailable` or `not-loaded`), source network
+release when recognised, area in km² and `pourPointOffsetM`. The area is from the full-resolution source and
+the offset is the distance downstream to the catchment's pour point. The catchment geometry is a GeoJSON
+Polygon or MultiPolygon for the pinned release and the March 2025 ORN Catchments layer, which the publisher
+licenses separately under OGL v3.0 with attribution. Missing or invalid catchment geometry leaves the reach
+trace available. The public projection excludes source feature properties, sample identifiers and upstream
+links. See the [publisher catchment report](https://openrivers.net/download/ORN%20Catchment%20Generation%20Document%20%28version%202%29.pdf).
 
 Tracer shares the observation adapter's limiter, OIDC exchange and signed transport. Locate is capped at 128 KiB
 and 8 seconds. Release-scoped traces have a 15-second budget and the signed transport's body cap. The private
