@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useId, useMemo, useState } from "react";
+import { InlineComparison } from "@/components/compare/inline-comparison";
 import { MeasurementList } from "@/components/measurement-list";
 import { StationMap } from "@/components/station-map";
 import { EmptyState, ErrorState } from "@/components/states";
@@ -24,7 +25,8 @@ import {
   type DiscoveryQuery,
 } from "@/lib/discovery";
 import { parameterLabel } from "@/lib/labels";
-import type { readMapContext } from "@/lib/map-context";
+import { DEFAULT_RANGE } from "@/lib/history/range";
+import { readMapContext, replaceExplorerParams } from "@/lib/map-context";
 import type { OverviewItem } from "@/lib/overview";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
@@ -63,9 +65,13 @@ export function MeasurementExplorer({
   // the original server payload, so the current URL is the truth.
   const [start] = useState(() => {
     if (typeof window === "undefined")
-      return { query: initialQuery, comparison: initialComparison };
+      return { query: initialQuery, comparison: initialComparison, map: initialMapContext };
     const params = new URLSearchParams(window.location.search);
-    return { query: readQuery(Object.fromEntries(params)), comparison: readCompareQuery(params) };
+    return {
+      query: readQuery(Object.fromEntries(params)),
+      comparison: readCompareQuery(params),
+      map: readMapContext(params),
+    };
   });
   const [selected, setSelected] = useState(() => {
     const restored: PublicMeasurement[] = [];
@@ -79,6 +85,8 @@ export function MeasurementExplorer({
     }
     return restored;
   });
+  const [range, setRange] = useState(start.comparison?.range ?? DEFAULT_RANGE);
+  const sharedRange = range === DEFAULT_RANGE ? undefined : range;
   const ids = useMemo(() => selected.map(({ measurementId }) => measurementId), [selected]);
   const addToComparison = (measurement: PublicMeasurement) => {
     const blocked = comparisonBlock(selected, measurement);
@@ -129,24 +137,18 @@ export function MeasurementExplorer({
     () => new Set(groups.map(({ stationId }) => stationId)),
     [groups],
   );
-  const initialStationId = initialMapContext?.station;
+  const initialStationId = start.map?.station;
   const filtered = q.trim() !== "" || type !== null;
 
   useEffect(() => {
-    // Keep the current view shareable without adding a history entry per keystroke.
-    // Update only the explorer filters and comparison slots.
-    const url = new URL(window.location.href);
-    const ours = new URL(searchHref({ q, type }), url.origin).searchParams;
-    compareParams(ids).forEach((value, name) => ours.set(name, value));
-    for (const name of ["q", "type", ...COMPARE_SLOTS]) {
-      const value = ours.get(name);
-      if (value === null) url.searchParams.delete(name);
-      else url.searchParams.set(name, value);
-    }
-    if (url.href !== window.location.href)
-      // `null` state: Next adopts the new URL as canonical (its documented integration), so Back restores it.
-      window.history.replaceState(null, "", url);
-  }, [q, type, ids]);
+    const ours = new URLSearchParams(searchHref({ q, type }).slice(2));
+    compareParams(ids, sharedRange).forEach((value, name) => ours.set(name, value));
+    replaceExplorerParams(
+      Object.fromEntries(
+        ["q", "type", "range", ...COMPARE_SLOTS].map((name) => [name, ours.get(name) ?? undefined]),
+      ),
+    );
+  }, [q, type, ids, sharedRange]);
 
   const count = filtered
     ? results.length === 0
@@ -167,16 +169,73 @@ export function MeasurementExplorer({
   return (
     <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
       <div className="min-w-0 lg:w-2/3 lg:shrink-0 [@media(scripting:none)]:hidden">
-        <a href={`#${listId}`} className="link sr-only focus:not-sr-only">
+        <a
+          href={`#${listId}`}
+          className="link mb-2 inline-block text-sm lg:sr-only lg:focus:not-sr-only"
+        >
           Browse stations
         </a>
         <StationMap
           stations={stations}
           filteredStationIds={filteredStationIds}
-          initialView={initialMapContext?.view}
+          initialView={start.map?.view}
+          initialTrace={start.map?.trace}
           initialStationId={initialStationId}
           comparisonAction={addToComparison}
         />
+        {items.length > 0 ? (
+          <section
+            aria-label="Comparison selection"
+            className="mt-5 rounded-lg border border-line bg-surface px-4 py-2"
+          >
+            <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-3">
+              <p aria-live="polite" className="text-sm font-medium">
+                {selected.length === 0
+                  ? "Add measurements to compare"
+                  : `${selected.length} of ${COMPARE_SLOTS.length} selected`}
+                {selected.length === 1 ? " · Add another to compare" : ""}
+              </p>
+              {selected.length >= 2 ? (
+                <Link
+                  href={compareHref(ids, sharedRange)}
+                  prefetch={false}
+                  className="inline-flex min-h-10 items-center rounded-md bg-accent px-4 text-sm font-semibold text-surface hover:bg-accent-strong"
+                >
+                  Open full comparison
+                </Link>
+              ) : null}
+            </div>
+            {selected.length > 0 ? (
+              <ul aria-label="Selected measurements" className="mt-1 flex flex-wrap gap-1.5">
+                {selected.map((measurement) => (
+                  <li
+                    key={measurement.measurementId}
+                    className="flex items-center gap-2 rounded-md border border-line px-2 text-sm"
+                  >
+                    {comparisonLabel(measurement)}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${comparisonLabel(measurement)}`}
+                      className="link min-h-10"
+                      onClick={() =>
+                        setSelected((current) =>
+                          current.filter(
+                            ({ measurementId }) => measurementId !== measurement.measurementId,
+                          ),
+                        )
+                      }
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        ) : null}
+        {ids.length >= 2 ? (
+          <InlineComparison ids={ids} range={range} onRangeChange={setRange} />
+        ) : null}
       </div>
       <div className="min-w-0 flex-1">
         {items.length > 0 ? (
@@ -191,11 +250,12 @@ export function MeasurementExplorer({
               {ids.map((id, index) => (
                 <input key={id} type="hidden" name={COMPARE_SLOTS[index]} value={id} />
               ))}
-              {initialMapContext?.view ? (
+              {sharedRange ? <input type="hidden" name="range" value={sharedRange} /> : null}
+              {start.map?.view ? (
                 <>
-                  <input type="hidden" name="lon" value={initialMapContext.view.center[0]} />
-                  <input type="hidden" name="lat" value={initialMapContext.view.center[1]} />
-                  <input type="hidden" name="zoom" value={initialMapContext.view.zoom} />
+                  <input type="hidden" name="lon" value={start.map.view.center[0]} />
+                  <input type="hidden" name="lat" value={start.map.view.center[1]} />
+                  <input type="hidden" name="zoom" value={start.map.view.zoom} />
                 </>
               ) : null}
               {initialStationId ? (
@@ -252,61 +312,17 @@ export function MeasurementExplorer({
             <p role="status" className="sr-only">
               {announcement}
             </p>
-
-            <section
-              aria-label="Comparison selection"
-              className="sticky top-0 z-20 mt-3 max-h-[40svh] overflow-auto rounded-lg border border-line bg-surface px-4 py-2 [@media(scripting:none)]:hidden"
-            >
-              <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-3">
-                <p aria-live="polite" className="text-sm font-medium">
-                  {selected.length === 0
-                    ? "Add measurements to compare"
-                    : `${selected.length} of ${COMPARE_SLOTS.length} selected`}
-                  {selected.length === 1 ? " · Add another to compare" : ""}
-                </p>
-                {selected.length >= 2 ? (
-                  <Link
-                    href={compareHref(ids)}
-                    prefetch={false}
-                    className="inline-flex min-h-10 items-center rounded-md bg-accent px-4 text-sm font-semibold text-surface hover:bg-accent-strong"
-                  >
-                    Compare selected measurements
-                  </Link>
-                ) : null}
-              </div>
-              {selected.length > 0 ? (
-                <ul aria-label="Selected measurements" className="mt-1 flex flex-wrap gap-1.5">
-                  {selected.map((measurement) => (
-                    <li
-                      key={measurement.measurementId}
-                      className="flex items-center gap-2 rounded-md border border-line px-2 text-sm"
-                    >
-                      {comparisonLabel(measurement)}
-                      <button
-                        type="button"
-                        aria-label={`Remove ${comparisonLabel(measurement)}`}
-                        className="link min-h-10"
-                        onClick={() =>
-                          setSelected((current) =>
-                            current.filter(
-                              ({ measurementId }) => measurementId !== measurement.measurementId,
-                            ),
-                          )
-                        }
-                      >
-                        Remove
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </section>
           </>
         ) : null}
         <section aria-labelledby={listId} className="@container mt-3 min-w-0">
           <h2 id={listId} tabIndex={-1} className="mb-3 text-lg font-semibold">
             Stations
           </h2>
+          {ids.length >= 2 ? (
+            <a href="#explorer-comparison" className="link mb-3 inline-block text-sm">
+              View comparison chart
+            </a>
+          ) : null}
           {catalogueUnavailable ? (
             <ErrorState title="Measurements are unavailable right now">
               Please try again in a few minutes.

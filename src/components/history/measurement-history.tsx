@@ -1,92 +1,19 @@
-import Link from "next/link";
 import { Suspense, use } from "react";
+import { CoverageNote, knownGaps, RangeNav } from "@/components/history/history-controls";
 import { Announce } from "@/components/history/announce";
 import { HistoryChart } from "@/components/history/history-chart";
 import { ObservationTable } from "@/components/history/observation-table";
 import { RainfallHistory } from "@/components/history/rainfall-history";
 import { Time } from "@/components/latest-reading";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
-import { cx } from "@/lib/cx";
 import { loadHistory, type HistoryResult } from "@/lib/history/load";
 import { HISTORY_RANGES, rangeWindow, type HistoryRange } from "@/lib/history/range";
 import { buildSeries } from "@/lib/history/series";
 import { measurementPath, parameterLabel } from "@/lib/labels";
-import type { Coverage, CoverageGap } from "@/lib/rdp/contract";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 import { getRdpClient } from "@/lib/rdp/server";
 
 const STATUS_ID = "history-status";
-
-export type KnownGap = CoverageGap & { reason: Exclude<CoverageGap["reason"], "unknown"> };
-
-const GAP_REASON: Record<KnownGap["reason"], string> = {
-  not_collected: "Not collected",
-  source_outage: "Source outage",
-  legacy_unrecoverable: "Not recoverable from earlier records",
-};
-
-export function knownGaps(coverage: Coverage): KnownGap[] {
-  return coverage.gaps.filter((gap): gap is KnownGap => gap.reason !== "unknown");
-}
-
-/** Range links; each keeps the rest of the view (`hrefFor`) so the page re-renders with only the range changed. */
-export function RangeNav({
-  range,
-  hrefFor,
-  prefetch,
-}: {
-  range: HistoryRange;
-  hrefFor: (range: HistoryRange) => string;
-  prefetch?: false;
-}) {
-  return (
-    <nav aria-label="History range">
-      <ul className="flex gap-1 rounded-md border border-line-strong bg-surface p-1">
-        {(Object.keys(HISTORY_RANGES) as HistoryRange[]).map((key) => (
-          <li key={key}>
-            <Link
-              href={hrefFor(key)}
-              prefetch={prefetch}
-              scroll={false}
-              aria-current={key === range ? "page" : undefined}
-              className={cx(
-                "inline-flex min-h-10 items-center rounded px-3 text-sm font-medium",
-                key === range ? "bg-accent text-surface" : "text-accent hover:bg-canvas",
-              )}
-            >
-              {HISTORY_RANGES[key].label}
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
-}
-
-/** RDP's coverage verdict in plain words. Unknown is never presented as complete. */
-export function CoverageNote({ coverage }: { coverage: Coverage }) {
-  const gaps = knownGaps(coverage);
-  return (
-    <div className="text-sm text-ink-muted">
-      {coverage.status === "complete" ? (
-        <p>Coverage verified complete for this period.</p>
-      ) : coverage.status === "unknown" ? (
-        <p>This record hasn’t been verified as complete.</p>
-      ) : (
-        <p>Part of this period has no data.</p>
-      )}
-      {gaps.length > 0 ? (
-        <ul className="mt-1 list-disc pl-5">
-          {gaps.map((gap) => (
-            <li key={gap.from}>
-              {GAP_REASON[gap.reason]}: <Time value={gap.from} /> to <Time value={gap.to} />
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
 
 function HistoryBody({
   measurement,

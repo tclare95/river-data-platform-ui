@@ -38,6 +38,7 @@ vi.mock("maplibre-gl", () => ({
       mapMock.events.addEventListener(name, handler, { once: true });
     getContainer = () => this.options.container;
     getCenter = () => ({ wrap: () => ({ lng: -1.3, lat: 52.8 }) });
+    getZoom = () => 8.5;
     addLayer = mapMock.addLayer;
     addSource = mapMock.addSource;
     getSource = () =>
@@ -176,6 +177,10 @@ describe("measurement explorer", () => {
   beforeEach(async () => {
     window.history.replaceState(null, "", "/");
     items = await fixtureItems();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockImplementation(async (url) => historyResponse(url)),
+    );
     mapMock.fail = false;
     mapMock.events = new EventTarget();
     mapMock.create.mockClear();
@@ -186,6 +191,18 @@ describe("measurement explorer", () => {
     mapMock.addLayer.mockClear();
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  function historyResponse(url: Parameters<typeof fetch>[0]) {
+    const { searchParams } = new URL(String(url), window.location.origin);
+    return Response.json({
+      data: ["a", "b", "c", "d"].flatMap((slot) => {
+        const measurement = items.find(
+          ({ measurement }) => measurement.measurementId === searchParams.get(slot),
+        )?.measurement;
+        return measurement ? [{ measurement, result: { status: "deferred" } }] : [];
+      }),
+    });
+  }
 
   function addPublishedPositions() {
     // Shardlow and Kegworth from the RDP #129 catalogue example.
@@ -226,7 +243,7 @@ describe("measurement explorer", () => {
     mapClick(map);
     expect(await screen.findByText(/Selected point’s modelled catchment/)).toBeInTheDocument();
     expect(fetchRiver).toHaveBeenCalledTimes(1);
-    expect(traceKinds()).toContain("catchment");
+    await waitFor(() => expect(traceKinds()).toContain("catchment"));
   });
 
   it.each([
@@ -236,13 +253,13 @@ describe("measurement explorer", () => {
     { lon: "-1.3", lat: "91", zoom: "8.5", camera: { bounds: GB_BOUNDS } },
     { lon: "-1.3", lat: "52.8", zoom: "99", camera: { bounds: GB_BOUNDS } },
   ])("validates initial camera parameters $lon / $lat / $zoom", async ({ camera, ...params }) => {
-    render(
-      <MeasurementExplorer
-        items={[]}
-        initialQuery={{ q: "", type: null }}
-        initialMapContext={readMapContext(params)}
-      />,
-    );
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      for (const entry of Array.isArray(value) ? value : value ? [value] : [])
+        search.append(key, entry);
+    }
+    window.history.replaceState(null, "", `/?${search}`);
+    render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
     await screen.findByRole("button", { name: "Trace river" });
     expect(mapMock.create).toHaveBeenCalledWith(expect.objectContaining(camera));
   });
@@ -252,7 +269,7 @@ describe("measurement explorer", () => {
     const station = items.find(
       ({ measurement }) => measurement.measurementId === "ea-shardlow-level",
     )!.measurement.stationId;
-    window.history.replaceState(null, "", "/?q=stone");
+    window.history.replaceState(null, "", `/?q=stone&station=${station}`);
     render(
       <MeasurementExplorer
         items={items}
@@ -363,18 +380,22 @@ describe("measurement explorer", () => {
     await user.click(selection.getByRole("button", { name: /^Remove Shardlow · Flow/ }));
     await user.click(list.getByRole("button", { name: /^Add to comparison: Stone · Rainfall/ }));
     const query = "?a=ea-shardlow-level&b=ea-stone-rainfall";
-    expect(selection.getByRole("link", { name: "Compare selected measurements" })).toHaveAttribute(
+    expect(selection.getByRole("link", { name: "Open full comparison" })).toHaveAttribute(
       "href",
       `/compare${query}`,
     );
-    expect(window.location.search).toBe(query);
+    expect(Object.fromEntries(new URLSearchParams(window.location.search))).toMatchObject({
+      a: "ea-shardlow-level",
+      b: "ea-stone-rainfall",
+      station: details.getByRole("heading", { name: "Shardlow" }).dataset.stationId,
+    });
 
     await user.type(screen.getByRole("searchbox"), "stone");
     expect(selection.getAllByRole("listitem")).toHaveLength(2);
     cleanup();
     render(explorer);
     expect(screen.getByRole("searchbox")).toHaveValue("stone");
-    expect(screen.getByRole("link", { name: "Compare selected measurements" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Open full comparison" })).toHaveAttribute(
       "href",
       `/compare${query}`,
     );
@@ -580,7 +601,11 @@ describe("measurement explorer", () => {
             data: { ...matchedTrace("upstream"), catchment: publishedCatchment },
           }),
         );
-      vi.stubGlobal("fetch", fetchTrace);
+      vi.stubGlobal("fetch", (url: Parameters<typeof fetch>[0], init?: RequestInit) =>
+        String(url).startsWith("/api/measurements/comparison")
+          ? Promise.resolve(historyResponse(url))
+          : fetchTrace(url, init),
+      );
       render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
       await enableStations(user);
       await user.click(await screen.findByRole("button", { name: "Shardlow" }));
@@ -593,7 +618,7 @@ describe("measurement explorer", () => {
       for (const button of details.getAllByRole("button", { name: /^Add to comparison/ })) {
         await user.click(button);
       }
-      const compare = screen.getByRole("link", { name: "Compare selected measurements" });
+      const compare = screen.getByRole("link", { name: "Open full comparison" });
       const comparisonUrl = compare.getAttribute("href");
       await user.click(screen.getByRole("button", { name: "Trace river" }));
       const direction = screen.getByRole("combobox", { name: "Direction" });
@@ -668,7 +693,7 @@ describe("measurement explorer", () => {
       await user.selectOptions(direction, "upstream");
       mapClick(map, -1.2, 52.6);
       expect(await screen.findByRole("button", { name: "Hide catchment" })).toBeInTheDocument();
-      expect(traceKinds()).toContain("catchment");
+      await waitFor(() => expect(traceKinds()).toContain("catchment"));
     },
   );
 
@@ -747,7 +772,21 @@ describe("measurement explorer", () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(catchmentTrace())
       .mockResolvedValueOnce(catchmentResults([shardlow, [stone]]));
-    vi.stubGlobal("fetch", fetchRiver);
+    let finishOldHistory!: (response: Response) => void;
+    const fetchHistory = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishOldHistory = resolve;
+          }),
+      )
+      .mockImplementation(async (url) => historyResponse(url));
+    vi.stubGlobal("fetch", (url: Parameters<typeof fetch>[0], init?: RequestInit) =>
+      String(url).startsWith("/api/measurements/comparison")
+        ? fetchHistory(url, init)
+        : fetchRiver(url, init),
+    );
     render(<MeasurementExplorer items={items} initialQuery={{ q: "shardlow", type: null }} />);
     await user.click(await screen.findByRole("button", { name: "Trace river" }));
     act(() => mapMock.events.dispatchEvent(new Event("load")));
@@ -755,7 +794,9 @@ describe("measurement explorer", () => {
     mapClick(map);
 
     const panel = within(await screen.findByRole("region", { name: "Catchment measurements" }));
-    expect(traceKinds()).toEqual(expect.arrayContaining(["selected", "catchment"]));
+    await waitFor(() =>
+      expect(traceKinds()).toEqual(expect.arrayContaining(["selected", "catchment"])),
+    );
     expect(fetchRiver).toHaveBeenCalledTimes(1);
     expect(within(map).queryByRole("button", { name: /Stone/ })).not.toBeInTheDocument();
     await user.click(panel.getByRole("button", { name: "Find measurements" }));
@@ -780,6 +821,12 @@ describe("measurement explorer", () => {
       within(map).getByRole("button", { name: "Stone, inside the modelled catchment" }),
     ).toBeInTheDocument();
     expect(mapMock.setLngLat).toHaveBeenCalledWith([-1.28, 52.81]);
+    const marker = within(map).getByRole("button", {
+      name: "Stone, inside the modelled catchment",
+    });
+    await user.click(marker);
+    const details = document.getElementById(marker.getAttribute("aria-controls")!)!;
+    act(() => mapMock.events.dispatchEvent(new Event("moveend")));
 
     const comparison = within(screen.getByRole("region", { name: "Comparison selection" }));
     expect(comparison.queryByRole("list")).not.toBeInTheDocument();
@@ -790,15 +837,115 @@ describe("measurement explorer", () => {
     const flow = list.getByRole("button", { name: /^Needs a third axis: Shardlow · Flow/ });
     expect(flow).toHaveAttribute("aria-disabled", "true");
     await user.click(flow);
-    const compare = comparison.getByRole("link", { name: "Compare selected measurements" });
+    const compare = comparison.getByRole("link", { name: "Open full comparison" });
     expect(compare).toHaveAttribute("href", "/compare?a=ea-shardlow-level&b=ea-stone-rainfall");
+    const chart = within(screen.getByRole("region", { name: "Comparison history" }));
+    expect(chart.getByText("Loading 7 days for 2 measurements")).toBeInTheDocument();
+    expect(fetchHistory).toHaveBeenCalledTimes(1);
+    await user.click(chart.getByRole("button", { name: "30 days" }));
+    expect(fetchHistory.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(fetchHistory.mock.calls[1][0]).toBe(
+      "/api/measurements/comparison?a=ea-shardlow-level&b=ea-stone-rainfall&range=30d",
+    );
+    expect(await chart.findByText("Showing 30 days for 2 measurements")).toBeInTheDocument();
+    await act(async () => finishOldHistory(new Response(null, { status: 503 })));
+    expect(chart.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "River map" })).toBe(map);
+    expect(within(details).getByRole("heading", { name: "Stone" })).toBeInTheDocument();
+    expect(list.getByRole("heading", { name: "Stone" })).toBeInTheDocument();
+    expect(mapMock.create).toHaveBeenCalledTimes(1);
+    expect(mapMock.fitBounds).not.toHaveBeenCalled();
+    expect(Object.fromEntries(new URLSearchParams(window.location.search))).toMatchObject({
+      a: "ea-shardlow-level",
+      b: "ea-stone-rainfall",
+      range: "30d",
+      lon: "-1.300000",
+      lat: "52.800000",
+      zoom: "8.500",
+      station: stone.stationId,
+      traceLon: "-1.25000000",
+      traceLat: "52.50000000",
+      direction: "upstream",
+      catchment: "show",
+    });
     await user.click(screen.getByRole("checkbox", { name: "Upstream reaches" }));
     expect(traceKinds()).toEqual(expect.arrayContaining(["selected", "catchment"]));
     await user.click(screen.getByRole("button", { name: "Hide catchment" }));
-    expect(compare).toHaveAttribute("href", "/compare?a=ea-shardlow-level&b=ea-stone-rainfall");
+    expect(compare).toHaveAttribute(
+      "href",
+      "/compare?a=ea-shardlow-level&b=ea-stone-rainfall&range=30d",
+    );
     await user.click(comparison.getByRole("button", { name: /^Remove Stone · Rainfall/ }));
+    expect(screen.queryByRole("region", { name: "Comparison history" })).not.toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).has("b")).toBe(false);
+    expect(fetchHistory).toHaveBeenCalledTimes(2);
     expect(list.getByRole("button", { name: /^Add to comparison: Shardlow · Flow/ })).toBeEnabled();
     expect(fetchRiver).toHaveBeenCalledTimes(2);
+  });
+
+  it("restores comparison range, viewport, station and catchment from a shared explorer URL", async () => {
+    addPublishedPositions();
+    const station = items.find(
+      ({ measurement }) => measurement.measurementId === "ea-shardlow-level",
+    )!.measurement.stationId;
+    const params = new URLSearchParams({
+      a: "ea-shardlow-level",
+      b: "ea-stone-rainfall",
+      c: "ea-shardlow-flow",
+      range: "30d",
+      lon: "-1.3",
+      lat: "52.8",
+      zoom: "8.5",
+      station,
+      traceLon: "-1.25",
+      traceLat: "52.5",
+      direction: "downstream",
+      catchment: "show",
+    });
+    window.history.replaceState(null, "", `/?${params}`);
+    const fetchHistory = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockImplementationOnce(async (url) => historyResponse(url));
+    const fetchTrace = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ data: matchedTrace("downstream") }))
+      .mockResolvedValueOnce(catchmentTrace());
+    vi.stubGlobal("fetch", (url: Parameters<typeof fetch>[0], init?: RequestInit) =>
+      String(url).startsWith("/api/measurements/comparison")
+        ? fetchHistory(url, init)
+        : fetchTrace(url, init),
+    );
+    const user = userEvent.setup();
+    render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    const chart = within(screen.getByRole("region", { name: "Comparison history" }));
+    expect(chart.getByRole("button", { name: "30 days", pressed: true })).toBeInTheDocument();
+    expect(await chart.findByRole("alert")).toHaveTextContent(
+      "Comparison history unavailable right now",
+    );
+    expect(mapMock.create).toHaveBeenCalledWith(
+      expect.objectContaining({ center: [-1.3, 52.8], zoom: 8.5 }),
+    );
+    expect(await screen.findByText(/Selected point’s modelled catchment/)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Direction" })).toHaveValue("downstream");
+    expect(fetchTrace.mock.calls.map(([url]) => url)).toEqual([
+      "/api/river/trace?lon=-1.25000000&lat=52.50000000&direction=downstream",
+      "/api/river/trace?lon=-1.25000000&lat=52.50000000&direction=upstream",
+    ]);
+    const map = screen.getByRole("region", { name: "River map" });
+    const marker = within(map).getByRole("button", { name: "Shardlow" });
+    const details = document.getElementById(marker.getAttribute("aria-controls")!)!;
+    expect(within(details).getByRole("heading", { name: "Shardlow" })).toBeInTheDocument();
+    await user.click(chart.getByRole("button", { name: "Try again" }));
+    expect(await chart.findByText("Showing 30 days for 2 measurements")).toBeInTheDocument();
+    expect(fetchHistory.mock.calls.map(([url]) => url)).toEqual(
+      Array(2).fill(
+        "/api/measurements/comparison?a=ea-shardlow-level&b=ea-stone-rainfall&range=30d",
+      ),
+    );
+    expect(new URLSearchParams(window.location.search).has("c")).toBe(false);
+    expect(mapMock.create).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("region", { name: "River map" })).toBe(map);
   });
 
   it("ignores a discovery response for an old point and qualifies empty results", async () => {

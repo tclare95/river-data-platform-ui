@@ -17,7 +17,7 @@ export function SiteHeader() {
       >
         Skip to content
       </a>
-      <Container className="flex h-16 items-center justify-between gap-4">
+      <Container className="flex min-h-16 flex-wrap items-center justify-between gap-x-4 py-2">
         <Link
           href="/"
           className="flex min-h-10 items-center gap-2.5 rounded-md font-semibold tracking-tight"

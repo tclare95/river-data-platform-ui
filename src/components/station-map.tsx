@@ -16,7 +16,13 @@ import {
 import { ErrorState } from "@/components/states";
 import type { StationGroup } from "@/lib/discovery";
 import { measurementPath, parameterLabel } from "@/lib/labels";
-import { GB_BOUNDS, LOCATION_ZOOM, MAX_MAP_ZOOM, type readMapContext } from "@/lib/map-context";
+import {
+  GB_BOUNDS,
+  LOCATION_ZOOM,
+  MAX_MAP_ZOOM,
+  replaceExplorerParams,
+  type readMapContext,
+} from "@/lib/map-context";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 import type { RiverDirection } from "@/lib/rdp/river-tracer";
 import type { PublicUpstreamMeasurements } from "@/lib/rdp/upstream-measurements";
@@ -66,12 +72,14 @@ export function StationMap({
   filteredStationIds,
   initialView,
   initialStationId,
+  initialTrace,
   comparisonAction,
 }: {
   stations: readonly LocatedStation[];
   filteredStationIds: ReadonlySet<string>;
   initialView?: ReturnType<typeof readMapContext>["view"];
   initialStationId?: string;
+  initialTrace?: ReturnType<typeof readMapContext>["trace"];
   comparisonAction: (measurement: PublicMeasurement) => ReactNode;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -97,9 +105,13 @@ export function StationMap({
   const [status, setStatus] = useState<"loading" | "ready" | "tiles" | "unavailable">("loading");
   const [selectedId, select] = useState(initialStation?.stationId);
   const [showStations, setShowStations] = useState(!!initialStation);
-  const [tracing, setTracing] = useState(false);
-  const [direction, setDirection] = useState<RiverDirection>("upstream");
-  const [trace, setTrace] = useState<Trace>();
+  const [tracing, setTracing] = useState(!!initialTrace);
+  const [direction, setDirection] = useState<RiverDirection>(initialTrace?.direction ?? "upstream");
+  const [trace, setTrace] = useState<Trace | undefined>(() =>
+    initialTrace
+      ? { point: initialTrace.point, showCatchment: initialTrace.showCatchment }
+      : undefined,
+  );
   const request = useRef<AbortController>(null);
   const discoveryRequest = useRef<AbortController>(null);
 
@@ -142,6 +154,7 @@ export function StationMap({
           if (changed) return { point, [direction]: result };
           return { ...current, [direction]: result };
         });
+        return result;
       } catch {
         if (!controller.signal.aborted)
           setTrace((current) => current && { ...current, error: "River trace unavailable" });
@@ -261,6 +274,15 @@ export function StationMap({
           if (active) setStatus("unavailable");
         });
         setRenderer({ map, library });
+        if (initialTrace) {
+          const { point, direction, showCatchment } = initialTrace;
+          const previous = { point, showCatchment };
+          void traceFrom(point, direction, previous).then((result) => {
+            if (active && result && direction === "downstream" && showCatchment !== undefined) {
+              void traceFrom(point, "upstream", { ...previous, downstream: result });
+            }
+          });
+        }
       })
       .catch(() => {
         if (active) setStatus("unavailable");
@@ -272,10 +294,26 @@ export function StationMap({
       discoveryRequest.current?.abort();
       map?.remove();
     };
-  }, [initialCamera]);
+  }, [initialCamera, initialTrace, traceFrom]);
 
   const unavailable = status === "unavailable";
   const map = renderer?.map;
+  useEffect(() => {
+    if (!map || unavailable) return;
+    const onMoveEnd = () => {
+      const { lng, lat } = map.getCenter().wrap();
+      replaceExplorerParams({
+        lon: lng.toFixed(6),
+        lat: Math.max(-85, Math.min(lat, 85)).toFixed(6),
+        zoom: map.getZoom().toFixed(3),
+      });
+    };
+    map.on("moveend", onMoveEnd);
+    return () => {
+      map.off("moveend", onMoveEnd);
+    };
+  }, [map, unavailable]);
+
   useEffect(() => {
     if (!map || !tracing || unavailable) return;
     const onClick = ({ originalEvent, lngLat }: MapMouseEvent) => {
@@ -298,6 +336,16 @@ export function StationMap({
   const downstream = traceGeometry(trace?.downstream);
   const catchment = useMemo(() => traceCatchment(upstreamResult), [upstreamResult]);
   const showCatchment = trace?.showCatchment !== false;
+  const shareCatchment = !!catchment || trace?.showCatchment !== undefined;
+  useEffect(() => {
+    replaceExplorerParams({
+      station: selectedId,
+      traceLon: point?.[0].toFixed(8),
+      traceLat: point?.[1].toFixed(8),
+      direction: point ? direction : undefined,
+      catchment: point && shareCatchment ? (showCatchment ? "show" : "hide") : undefined,
+    });
+  }, [selectedId, point, direction, shareCatchment, showCatchment]);
   const visibleUpstream = trace?.hiddenRoutes?.upstream ? null : upstream;
   const visibleDownstream = trace?.hiddenRoutes?.downstream ? null : downstream;
   useEffect(() => {
