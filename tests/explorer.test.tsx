@@ -538,6 +538,7 @@ describe("measurement explorer", () => {
       "/api/river/trace?lon=-1.33536800&lat=52.86543100&direction=upstream",
     );
     expect(await screen.findByText(/upstream route incomplete/)).toBeInTheDocument();
+    await waitFor(() => expect(traceKinds()).toContain("upstream"));
     expect(screen.getByText(/Snapped sample · 18 m away/)).toBeInTheDocument();
     expect(
       screen.getByText(/test-network · 0123456789ab · Synthetic network attribution/),
@@ -568,7 +569,7 @@ describe("measurement explorer", () => {
       "/api/river/trace?lon=-1.33536800&lat=52.86543100&direction=downstream",
     );
     expect(await screen.findByText(/downstream route incomplete/)).toBeInTheDocument();
-    expect(traceKinds()).toContain("downstream");
+    await waitFor(() => expect(traceKinds()).toContain("downstream"));
     expect(mapMock.addSource).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Clear trace" }));
@@ -632,11 +633,13 @@ describe("measurement explorer", () => {
       const map = screen.getByRole("region", { name: "River map" });
       mapClick(map);
       await screen.findByRole("button", { name: "Hide catchment" });
-      expect(currentTraceData().features).toContainEqual({
-        type: "Feature",
-        properties: { kind: "catchment" },
-        geometry,
-      });
+      await waitFor(() =>
+        expect(currentTraceData().features).toContainEqual({
+          type: "Feature",
+          properties: { kind: "catchment" },
+          geometry,
+        }),
+      );
       expect(mapMock.addLayer).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "fill",
