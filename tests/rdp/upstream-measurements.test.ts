@@ -145,6 +145,7 @@ describe("upstream measurements application route", () => {
       mode: "fixture",
       data: {
         status: "available",
+        omittedMeasurements: 3,
         release: { releaseId: release.releaseId, version: release.version },
         catchment: { id: "catchment-456", areaKm2: 12.5, pourPointOffsetM: 25 },
         networkCoverage: { completeness: "incomplete" },
@@ -206,6 +207,7 @@ describe("upstream measurements application route", () => {
     const response = await GET(request());
     expect(response.status).toBe(200);
     const { data } = await response.json();
+    expect(data.omittedMeasurements).toBe(0);
     expect(
       data.data[0].measurements.map((row: { measurementId: string }) => row.measurementId),
     ).toEqual(ids);

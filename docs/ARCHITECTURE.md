@@ -76,8 +76,8 @@ release when recognised, area in km² and `pourPointOffsetM`. The area is from t
 the offset is the distance downstream to the catchment's pour point. The catchment geometry is a GeoJSON
 Polygon or MultiPolygon for the pinned release and the March 2025 ORN Catchments layer, which the publisher
 licenses separately under OGL v3.0 with attribution. Missing or invalid catchment geometry leaves the reach
-trace available. The public projection excludes source feature properties, sample identifiers and upstream
-links. See the [publisher catchment report](https://openrivers.net/download/ORN%20Catchment%20Generation%20Document%20%28version%202%29.pdf).
+trace available. The polygon feature ID must match the trace metadata. The public response includes that ID
+with the approved polygon and excludes other source feature properties, sample identifiers and upstream links. See the [publisher catchment report](https://openrivers.net/download/ORN%20Catchment%20Generation%20Document%20%28version%202%29.pdf).
 
 Tracer shares the observation adapter's limiter, OIDC exchange and signed transport. Locate is capped at 128 KiB
 and 8 seconds. Release-scoped traces have a 15-second budget and the signed transport's body cap. The private
@@ -106,7 +106,8 @@ detail page. Comparison actions use the shared selection and compatibility rules
 `GET /api/river/upstream-measurements?lon=&lat=&release=` takes one WGS84 point and an optional
 16-character lowercase hex token. Pass the first 16 characters of the displayed River Tracer release
 digest to pin discovery to that release. Requests and responses use no-store. Cancel the fetch when the
-point or release changes and ignore any result from the previous selection.
+point or release changes and ignore any result from the previous selection. Display results only when their
+release and catchment ID match the displayed polygon. A mismatch offers a refresh of the selected point.
 
 - `data.status` is `available`, `location_not_matched` or `catchment_unavailable`. Keep station browsing
   available in all three cases. An available result can have zero publicly displayable measurements.
@@ -119,7 +120,9 @@ point or release changes and ignore any result from the previous selection.
 - `meta.complete` and `meta.counts` describe RDP's stage-wide published rainfall, level and flow station
   scope. `unknown`, `ambiguous` and `nearBoundary` stations are excluded from candidates and make that
   scope incomplete. Counts are aggregate station counts. The displayed groups can be fewer because
-  the UI requires each measurement to match an approved catalogue entry and its verified position.
+  the UI requires each measurement to match an approved catalogue entry and its verified position. The
+  public response counts non-displayable measurement matches separately from RDP's station counts so
+  a partial or undisplayable result is distinguishable from a search with no matches.
 - Fixed failures are `INVALID_REQUEST` (400), `DISABLED` (404 from the RDP ReadApi envelope),
   `RELEASE_NOT_AVAILABLE` (410, re-run River Tracer locate), `RESULT_TOO_LARGE` (413),
   `CANCELLED` (499), `UNAVAILABLE` (503) and `TIMEOUT` (504).
@@ -174,7 +177,7 @@ counts. The fixture suite uses synthetic RDP responses and does not depend on th
 - **Drainage overview** — The launch fallback uses the basemap. The map's sources and coverage disclosure explains that overview boundaries are unavailable. Selecting a point uses the existing signed River Tracer route and labels the result as a modelled catchment for that point. The overview layer depends on RDP's approved immutable manifest, geometry format and public delivery URL. [RDP overview specification](https://github.com/tclare95/river-data-platform/pull/151)
 - **Explorer comparison** — Station markers, the station list and catchment results share the two-axis selection. From two compatible measurements, the explorer shows the same chart, readings table and coverage used by the chart-focused `/compare` page. Changing the selection or range replaces just the inline history request, leaving the map and any open catchment results in place.
 - **Inline history boundary** — `GET /api/measurements/comparison?a=&b=&c=&d=&range=` accepts two to four distinct published IDs and a 7- or 30-day range. It validates axis compatibility before loading and sends only public comparison data, capped at 4 MiB. Both views use the same hourly windows, per-series pagination and deadlines, and assembled history cache. The route falls under the existing `/api/measurements/*` firewall rule.
-- **Shareable explorer** — The URL stores ordered comparison IDs, range, filters, viewport, selected station and trace point, direction and catchment visibility. Opening a shared link reloads the trace against the active network release. Catchment measurement discovery remains on demand.
+- **Shareable explorer** — The URL stores ordered comparison IDs, range, filters, viewport, selected station and trace point, direction and catchment visibility. Opening a shared link reloads the trace against the active network release and discovers measurements when an approved catchment is available.
 - **Detail** (`/measurements/{measurementId}`): RDP's measurement ID is the stable URL. `layout.tsx` resolves the ID against the cached catalogue _before_ any streaming, so unknown, malformed and non-displayable IDs return a real 404 (indistinguishable from each other); the page then reads latest under its own `loading.tsx`.
 - Provider quality is shown only when it is a plain word (EA gauge quality arrives as raw JSON text); structured values are omitted, not printed.
 

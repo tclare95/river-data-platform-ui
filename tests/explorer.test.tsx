@@ -122,6 +122,7 @@ const polygon = [
   ],
 ];
 const publishedCatchment = {
+  id: "test-catchment",
   status: "published",
   geometry: { type: "Polygon", coordinates: polygon },
   areaKm2: 12.5,
@@ -140,13 +141,18 @@ const matchedTrace = (direction: string) => ({
 const catchmentTrace = () =>
   Response.json({ data: { ...matchedTrace("upstream"), catchment: publishedCatchment } });
 
-function catchmentResults(stations: OverviewItem["measurement"][][] = [], uncertain = false) {
+function catchmentResults(
+  stations: OverviewItem["measurement"][][] = [],
+  uncertain = false,
+  { id = publishedCatchment.id, omittedMeasurements = 0 } = {},
+) {
   return Response.json({
     data: {
       status: "available",
       release: traceRelease,
       matchStatus: "Matched",
-      catchment: { id: "test-catchment", areaKm2: 12.5, pourPointOffsetM: 43.5 },
+      catchment: { id, areaKm2: 12.5, pourPointOffsetM: 43.5 },
+      omittedMeasurements,
       networkCoverage: { completeness: uncertain ? "incomplete" : "complete" },
       meta: {
         scope: "published_rainfall_level_flow",
@@ -1025,13 +1031,13 @@ describe("measurement explorer", () => {
       act(() => mapMock.events.dispatchEvent(new Event("load")));
       mapClick(screen.getByRole("region", { name: "River map" }));
       await screen.findByText("No matching published measurements");
-      expect(traceKinds()).toContain("catchment");
+      await waitFor(() => expect(traceKinds()).toContain("catchment"));
 
       await user.selectOptions(screen.getByRole("combobox", { name: "Direction" }), "downstream");
       expect(
         await screen.findByText(status === 200 ? /test-network-next/ : /River network updated/),
       ).toBeInTheDocument();
-      expect(traceKinds()).not.toContain("catchment");
+      await waitFor(() => expect(traceKinds()).not.toContain("catchment"));
       expect(
         screen.queryByRole("region", { name: "Catchment measurements" }),
       ).not.toBeInTheDocument();
@@ -1057,6 +1063,65 @@ describe("measurement explorer", () => {
     expect(await screen.findByText("No matching published measurements")).toBeInTheDocument();
     expect(fetchRiver.mock.calls[2][0]).toBe(fetchRiver.mock.calls[1][0]);
     expect(fetchRiver).toHaveBeenCalledTimes(3);
+  });
+
+  it("requires discovery to match the displayed polygon within the same release", async () => {
+    addPublishedPositions();
+    const user = userEvent.setup();
+    const shardlow = items.find(
+      ({ measurement }) => measurement.measurementId === "ea-shardlow-level",
+    )!.measurement;
+    const fetchRiver = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(catchmentTrace())
+      .mockResolvedValueOnce(catchmentResults([[shardlow]], false, { id: "different-catchment" }))
+      .mockResolvedValueOnce(catchmentTrace())
+      .mockResolvedValueOnce(catchmentResults([[shardlow]], false, { omittedMeasurements: 1 }));
+    vi.stubGlobal("fetch", fetchRiver);
+    render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
+    await screen.findByRole("button", { name: "Trace river" });
+    act(() => mapMock.events.dispatchEvent(new Event("load")));
+    const map = screen.getByRole("region", { name: "River map" });
+    mapClick(map);
+
+    const panel = await screen.findByRole("region", { name: "Catchment measurements" });
+    expect(await within(panel).findByRole("alert")).toHaveTextContent(
+      "Measurement results are for a different catchment",
+    );
+    await waitFor(() => expect(traceKinds()).toContain("catchment"));
+    expect(within(panel).queryByRole("link")).not.toBeInTheDocument();
+    expect(
+      within(map).queryByRole("button", { name: /inside the modelled catchment/ }),
+    ).not.toBeInTheDocument();
+
+    await user.click(within(panel).getByRole("button", { name: "Refresh catchment" }));
+    const refreshed = await screen.findByRole("region", { name: "Catchment measurements" });
+    expect(await within(refreshed).findByRole("link", { name: /Water level/ })).toHaveAttribute(
+      "href",
+      "/measurements/ea-shardlow-level",
+    );
+    expect(
+      within(refreshed).getByText("Some matching measurements could not be displayed."),
+    ).toBeInTheDocument();
+    expect(fetchRiver.mock.calls[2][0]).toBe(fetchRiver.mock.calls[0][0]);
+  });
+
+  it("distinguishes undisplayable measurements from an empty catchment", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(catchmentTrace())
+        .mockResolvedValueOnce(catchmentResults([], false, { omittedMeasurements: 2 })),
+    );
+    render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
+    await screen.findByRole("button", { name: "Trace river" });
+    mapClick(screen.getByRole("region", { name: "River map" }));
+
+    expect(
+      await screen.findByText("Matching measurements could not be displayed"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No matching published measurements")).not.toBeInTheDocument();
   });
 
   it("refreshes the same river point after discovery reports a retired release", async () => {

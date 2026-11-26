@@ -57,6 +57,7 @@ export async function GET(request: Request) {
         catchment: catchment
           ? {
               status: catchment.status,
+              id: publishCatchment ? catchment.id : null,
               areaKm2: catchment.areaKm2,
               pourPointOffsetM: catchment.pourPointOffsetM,
               sourceNetworkRelease: catchment.sourceNetworkRelease,
