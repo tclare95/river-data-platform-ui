@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useId } from "react";
+import { useId, useMemo } from "react";
 import {
   CartesianGrid,
   ComposedChart,
@@ -16,12 +16,17 @@ import { ComparisonValue } from "@/components/compare/comparison-table";
 import { IsolatedDot, timeTicks, valueAxis } from "@/components/history/history-chart";
 import { RainfallBars } from "@/components/history/rainfall-history";
 import { Time } from "@/components/latest-reading";
-import { comparisonAxes, type AlignedRow, type ComparisonSide } from "@/lib/compare";
+import {
+  comparisonAxes,
+  comparisonInspectionRows,
+  type AlignedRow,
+  type ComparisonSide,
+} from "@/lib/compare";
 import { formatPeriod } from "@/lib/format";
 import { rainfallBounds } from "@/lib/history/rainfall";
 import { buildSeries } from "@/lib/history/series";
 import { datumSummary, measurementPath, parameterLabel } from "@/lib/labels";
-import { epochMs } from "@/lib/rdp/contract";
+import { epochMs, tickKey } from "@/lib/rdp/contract";
 
 const STYLES = [
   { color: "var(--color-accent)", dash: undefined, angle: 0 },
@@ -30,9 +35,18 @@ const STYLES = [
   { color: "var(--color-compare-quaternary)", dash: "8 3 2 3", angle: 90 },
 ];
 const axisNumber = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3 });
+const inspectionTime = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
 
 export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows: AlignedRow[] }) {
   const patternId = useId();
+  const data = useMemo(() => comparisonInspectionRows(rows), [rows]);
   const series = sides.flatMap(({ measurement, result }, index) => {
     if (result.status !== "ok") return [];
     const intervals = "intervals" in result ? result.intervals : null;
@@ -78,8 +92,6 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
     }
   }
   const x = timeTicks(start, end);
-  // Recharts snaps the cursor to source rows. Line-only break points stay on the visible axis.
-  const data = rows.map((row) => ({ ...row, t: epochMs(row.time), anchor: 0 })).reverse();
   const axisSide = (axis: number) => (dual ? (axis === 0 ? "Left axis" : "Right axis") : "Y axis");
   const firstRain = series.find((item) => item.intervals);
   const legend = series.map((item) => {
@@ -153,8 +165,11 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
           ))}
         </ul>
       </figcaption>
+      <p id={`${patternId}-instructions`} className="sr-only">
+        Use the left and right arrow keys to inspect the timeline.
+      </p>
       <div
-        role="img"
+        role="group"
         aria-label={`Shared timeline in UK time. ${legend.map(({ label, axis }) => `${label}, ${axis}`).join(". ")}. Readings are in the comparison table below.`}
         className="h-64 w-full touch-pan-y sm:h-80"
       >
@@ -162,7 +177,9 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
           <ComposedChart
             data={data}
             margin={{ top: 8, left: 4, right: 4, bottom: 0 }}
-            accessibilityLayer={false}
+            accessibilityLayer
+            aria-label="Inspect compared readings"
+            aria-describedby={`${patternId}-instructions`}
           >
             <CartesianGrid yAxisId={0} vertical={false} stroke="var(--color-line)" />
             <XAxis
@@ -265,7 +282,7 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
             )}
             <Line
               xAxisId="readings"
-              dataKey="anchor"
+              dataKey={() => 0}
               stroke="none"
               dot={false}
               activeDot={false}
@@ -279,9 +296,12 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
                 const row = active && activeIndex != null ? data[Number(activeIndex)] : undefined;
                 if (!row) return null;
                 return (
-                  <div className="max-w-56 rounded border border-line bg-surface px-3 py-2 text-xs text-ink shadow-sm">
+                  <div
+                    role="status"
+                    className="max-w-56 rounded border border-line bg-surface px-3 py-2 text-xs text-ink shadow-sm"
+                  >
                     <p className="text-ink-muted">
-                      <Time value={row.time} />
+                      <time dateTime={row.time}>{inspectionTime.format(row.t)}</time>
                     </p>
                     {legend.map(({ index, label, measurement, color }) => {
                       const reading = row.readings[index];
@@ -292,6 +312,11 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
                             {label}
                           </p>
                           <ComparisonValue reading={reading} unit={measurement.unit} />
+                          {"label" in reading && tickKey(reading.label) !== tickKey(row.time) ? (
+                            <p className="text-ink-muted">
+                              Provider label <Time value={reading.label} />
+                            </p>
+                          ) : null}
                         </div>
                       );
                     })}

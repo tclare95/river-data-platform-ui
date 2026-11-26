@@ -54,7 +54,8 @@ describe("inline comparison history", () => {
       },
     ]);
     const calls = historyCalls();
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls).toHaveLength(4);
+    expect(calls.filter(([{ query }]) => query?.cursor)).toHaveLength(2);
     for (const [{ query }] of calls) {
       expect(query).toMatchObject({
         from: "2026-10-20T12:00:00.000Z",
@@ -67,6 +68,32 @@ describe("inline comparison history", () => {
     expect(reordered.status).toBe(200);
     expect((await reordered.json()).data).toEqual([...data].reverse());
     expect(historyCalls()).toHaveLength(0);
+  });
+
+  it("keeps complete smaller series when the combined response exceeds the byte cap", async () => {
+    transport.mockImplementation(async (call) => {
+      const response = await fixture(call);
+      if (!call.path.endsWith("/ea-shardlow-level/observations")) return response;
+      const body = response as { data: { quality: string }[] };
+      return {
+        ...body,
+        data: body.data.map((row) => ({ ...row, quality: "\u00e9".repeat(800) })),
+      };
+    });
+    const response = await request(`${pair}&range=30d`);
+    expect(response.status).toBe(200);
+    const json = await response.text();
+    expect(Buffer.byteLength(json)).toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(JSON.parse(json).data).toMatchObject([
+      {
+        measurement: { measurementId: "ea-shardlow-level" },
+        result: { status: "too_large" },
+      },
+      {
+        measurement: { measurementId: "ea-stone-rainfall" },
+        result: { status: "ok", pages: 2, intervals: expect.any(Array) },
+      },
+    ]);
   });
 
   it("keeps a failed series independent of the other series", async () => {

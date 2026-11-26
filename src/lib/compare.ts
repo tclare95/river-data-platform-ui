@@ -1,9 +1,9 @@
 import type { HistoryResult, PublicObservation } from "@/lib/history/load";
-import type { RainfallInterval } from "@/lib/history/rainfall";
+import { rainfallBounds, type RainfallInterval } from "@/lib/history/rainfall";
 import { parseRange, type HistoryRange } from "@/lib/history/range";
 import { formatPeriod } from "@/lib/format";
 import { parameterLabel } from "@/lib/labels";
-import { tickKey } from "@/lib/rdp/contract";
+import { epochMs, tickKey } from "@/lib/rdp/contract";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
 export const COMPARE_SLOTS = ["a", "b", "c", "d"] as const;
@@ -102,4 +102,49 @@ export function alignReadings(series: readonly (readonly ComparisonReading[])[])
     }
   }
   return [...rows.entries()].sort(([x], [y]) => y.localeCompare(x)).map(([, row]) => row);
+}
+
+/** Snap inspection to source times and to a point inside each verified rainfall bar. */
+export function comparisonInspectionRows(rows: readonly AlignedRow[]) {
+  const points = new Map(rows.map((row) => [tickKey(row.time), row]));
+  const periods = (rows[0]?.readings ?? []).map(
+    () =>
+      [] as {
+        from: number;
+        to: number;
+        reading: RainfallInterval;
+      }[],
+  );
+
+  for (const { readings } of rows) {
+    readings.forEach((reading, index) => {
+      if (!reading || !("label" in reading)) return;
+      const bounds = rainfallBounds(reading);
+      if (!bounds) return;
+      const [from, to] = bounds.map(epochMs);
+      if (to <= from) return;
+      periods[index].push({ from, to, reading });
+      const time = new Date(from + (to - from) / 2).toISOString();
+      const key = tickKey(time);
+      if (!points.has(key)) points.set(key, { time, readings: readings.map(() => null) });
+    });
+  }
+
+  for (const intervals of periods) intervals.sort((a, b) => a.from - b.from);
+  const cursors = periods.map(() => 0);
+  return [...points.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, row]) => {
+      const t = epochMs(row.time);
+      return {
+        time: row.time,
+        t,
+        readings: row.readings.map((reading, index) => {
+          const intervals = periods[index];
+          while (intervals[cursors[index]]?.to <= t) cursors[index]++;
+          const interval = intervals[cursors[index]];
+          return reading ?? (interval && interval.from <= t ? interval.reading : null);
+        }),
+      };
+    });
 }

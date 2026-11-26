@@ -118,7 +118,7 @@ describe("compare page", () => {
     useClient(transport);
     const params = {
       a: "ea-colwick-level",
-      b: "ea-shardlow-flow",
+      b: "ea-stone-rainfall",
       c: "ea-clifton-bridge-level",
       d: "ea-church-wilne-level",
     };
@@ -127,22 +127,22 @@ describe("compare page", () => {
     const legend = screen.getByRole("list", { name: "Chart legend" });
     expect(within(legend).getAllByRole("listitem")).toHaveLength(4);
     expect(within(legend).getAllByText(/Left axis · mAOD/)).toHaveLength(3);
-    expect(within(legend).getByText(/Right axis · m3\/s/)).toBeVisible();
+    expect(within(legend).getByText(/Right axis.*mm per 15 minutes/)).toBeVisible();
     const styles = [...legend.querySelectorAll("line")].map((line) =>
       line.getAttribute("stroke-dasharray"),
     );
-    expect(new Set(styles).size).toBe(4);
-    const chart = screen.getByRole("img", { name: /^Shared timeline/ });
+    expect(new Set(styles).size).toBe(3);
+    const chart = screen.getByRole("group", { name: /^Shared timeline/ });
     expect(chart.querySelectorAll(".recharts-yAxis")).toHaveLength(2);
     expect(chart.querySelectorAll(".recharts-xAxis")).toHaveLength(1);
     expect(screen.queryByRole("combobox")).toBeNull();
-    expect(screen.getByRole("link", { name: /^Remove Shardlow · Flow/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /^Remove Stone/ })).toHaveAttribute(
       "href",
       "/compare?a=ea-colwick-level&b=ea-clifton-bridge-level&c=ea-church-wilne-level&range=7d",
     );
     expect(screen.getByRole("link", { name: "30 days" })).toHaveAttribute(
       "href",
-      "/compare?a=ea-colwick-level&b=ea-shardlow-flow&c=ea-clifton-bridge-level&d=ea-church-wilne-level&range=30d",
+      "/compare?a=ea-colwick-level&b=ea-stone-rainfall&c=ea-clifton-bridge-level&d=ea-church-wilne-level&range=30d",
     );
     await userEvent.click(screen.getByText(/^Compared readings table/));
     const table = screen.getByRole("table");
@@ -192,7 +192,7 @@ describe("compare page", () => {
   it("draws level and flow on one timeline and preserves the range links", async () => {
     await renderCompare({ a: "ea-shardlow-level", b: "ea-shardlow-flow", range: "7d" });
     const history = screen.getByRole("region", { name: "History" });
-    const chart = within(history).getByRole("img");
+    const chart = within(history).getByRole("group", { name: /^Shared timeline/ });
     expect(chart).toHaveAccessibleName(
       /Shardlow water level, Left axis · mASD · Local gauge datum.*Shardlow flow, Right axis · m3\/s/,
     );
@@ -209,7 +209,7 @@ describe("compare page", () => {
 
   it("labels independent local datum scales for levels from different stations", async () => {
     await renderCompare({ a: "ea-colwick-level", b: "ea-shardlow-level" });
-    const chart = screen.getByRole("img", { name: /^Shared timeline/ });
+    const chart = screen.getByRole("group", { name: /^Shared timeline/ });
     expect(chart).toHaveAccessibleName(
       /Colwick water level, Left axis · mASD · Local gauge datum.*Shardlow water level, Right axis · mASD · Local gauge datum/,
     );
@@ -277,7 +277,7 @@ describe("compare page", () => {
         return {
           ...body,
           data: body.data.filter((row) =>
-            [first, zero, missing, unverified, ineligible].includes(row.observedAt as string),
+            [first, zero, missing, ineligible].includes(row.observedAt as string),
           ),
         };
       }),
@@ -287,7 +287,7 @@ describe("compare page", () => {
       "href",
       "/?a=ea-colwick-level&b=ea-stone-rainfall",
     );
-    const chart = screen.getByRole("img", { name: /^Shared timeline/ });
+    const chart = screen.getByRole("group", { name: /^Shared timeline/ });
     expect(chart).toHaveAccessibleName(/Left axis · mASD.*Right axis · mm per 15 minutes/);
     const bar = within(chart).getByText(/18 Nov, 11:45 to 18 Nov, 12:00 · 1.25 mm/).parentElement!;
     expect(bar.tagName).toBe("rect");
@@ -297,9 +297,24 @@ describe("compare page", () => {
     ).toBe("line");
     expect(within(chart).getByText(/ · Ineligible/).parentElement?.tagName).toBe("path");
     expect(within(chart).queryByText(/18 Nov, 12:15 to 18 Nov, 12:30/)).toBeNull();
-    expect(
-      chart.querySelector('path.recharts-line-curve[stroke="var(--color-accent)"]'),
-    ).toBeInTheDocument();
+    const levelPath = chart.querySelector('path.recharts-line-curve[stroke="var(--color-accent)"]');
+    expect(levelPath?.getAttribute("d")?.match(/M/g)).toHaveLength(2);
+
+    const inspector = within(chart).getByRole("application", { name: "Inspect compared readings" });
+    expect(inspector).toHaveAccessibleDescription(/left and right arrow keys/);
+    await act(async () => inspector.focus());
+    expect(inspector).toHaveFocus();
+    expect(await within(chart).findByText("1.25 mm")).toBeVisible();
+    expect(within(chart).getByText(/Provider label/)).toHaveTextContent("18 Nov, 12:00");
+    expect(within(chart).getByText(/18 Nov, 11:52:30/)).toBeVisible();
+    expect(within(chart).getByRole("status")).not.toHaveTextContent("Colwick water level");
+    fireEvent.keyDown(inspector, { key: "ArrowRight" });
+    expect(await within(chart).findByText(/18 Nov, 12:00:00/)).toBeVisible();
+    const inspected = within(chart).getByRole("status");
+    expect(inspected).toHaveTextContent("Colwick water level");
+    expect(inspected).toHaveTextContent("Stone rainfall");
+    expect(inspected).toHaveTextContent(/-?\d[\d.]* mASD/);
+    await act(async () => inspector.blur());
 
     const surface = chart.querySelector<HTMLDivElement>(".recharts-wrapper")!;
     Object.defineProperties(surface, {
@@ -309,8 +324,8 @@ describe("compare page", () => {
     vi.spyOn(surface, "getBoundingClientRect").mockReturnValue(
       DOMRect.fromRect({ width: 360, height: 256 }),
     );
-    const clientX = Number(bar.getAttribute("x")) + Number(bar.getAttribute("width"));
-    fireEvent.mouseMove(surface, { clientX: clientX - 2, clientY: 120 });
+    const clientX = Number(bar.getAttribute("x")) + Number(bar.getAttribute("width")) / 2;
+    fireEvent.mouseMove(surface, { clientX, clientY: 120 });
     expect(await within(chart).findByText("1.25 mm")).toBeVisible();
     const mark = within(chart).getByText(/ · Ineligible/).parentElement!;
     const lastX = Number(mark.getAttribute("d")!.split(" ")[1]) + 5;
@@ -332,7 +347,7 @@ describe("compare page", () => {
   it("lists both series at their exact times in an accessible table", async () => {
     await renderCompare({ a: "ea-colwick-level", b: "ea-shardlow-level" });
     const history = screen.getByRole("region", { name: "History" });
-    await within(history).findAllByRole("img");
+    await within(history).findByRole("group", { name: /^Shared timeline/ });
     await userEvent.click(within(history).getByText(/^Compared readings table/));
     const table = within(history).getByRole("table");
     expect(
@@ -369,7 +384,7 @@ describe("compare page", () => {
     expect(await within(history).findByRole("alert")).toHaveTextContent(
       "Shardlow flow: history unavailable right now",
     );
-    const chart = within(history).getByRole("img");
+    const chart = within(history).getByRole("group", { name: /^Shared timeline/ });
     expect(chart).toHaveAccessibleName(/Shardlow water level/);
     expect(chart.querySelectorAll(".recharts-yAxis")).toHaveLength(1);
   });
@@ -382,7 +397,7 @@ describe("compare page", () => {
     );
     await renderCompare({ a: "ea-shardlow-level", b: "ea-shardlow-flow" });
     expect(await screen.findByText("Shardlow flow: no readings in the last 7 days")).toBeVisible();
-    expect(screen.getByRole("img", { name: /^Shared timeline/ })).toHaveAccessibleName(
+    expect(screen.getByRole("group", { name: /^Shared timeline/ })).toHaveAccessibleName(
       /Shardlow water level/,
     );
   });
