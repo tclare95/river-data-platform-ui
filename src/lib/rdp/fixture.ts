@@ -138,7 +138,7 @@ function round(value: number, digits: number) {
 }
 
 function iso(ms: number) {
-  return new Date(ms).toISOString().replace(/\.\d{3}Z$/, ".0000000Z");
+  return new Date(ms).toISOString().replace(/Z$/, "0000Z");
 }
 
 function find(id: string) {

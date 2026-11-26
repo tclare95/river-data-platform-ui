@@ -2,6 +2,8 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MeasurementExplorer } from "@/components/measurement-explorer";
+import { loadChartHistory, type HistoryResult } from "@/lib/history/load";
+import { rangeWindow } from "@/lib/history/range";
 import { createRdpClient } from "@/lib/rdp/client";
 import { createFixtureTransport } from "@/lib/rdp/fixture";
 import { GB_BOUNDS, readMapContext } from "@/lib/map-context";
@@ -198,14 +200,24 @@ describe("measurement explorer", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  function historyResponse(url: Parameters<typeof fetch>[0]) {
+  function historyResponse(
+    url: Parameters<typeof fetch>[0],
+    rainfall: HistoryResult = { status: "deferred" },
+  ) {
     const { searchParams } = new URL(String(url), window.location.origin);
     return Response.json({
       data: ["a", "b", "c", "d"].flatMap((slot) => {
         const measurement = items.find(
           ({ measurement }) => measurement.measurementId === searchParams.get(slot),
         )?.measurement;
-        return measurement ? [{ measurement, result: { status: "deferred" } }] : [];
+        return measurement
+          ? [
+              {
+                measurement,
+                result: measurement.kind === "period_total" ? rainfall : { status: "deferred" },
+              },
+            ]
+          : [];
       }),
     });
   }
@@ -788,7 +800,20 @@ describe("measurement explorer", () => {
             finishOldHistory = resolve;
           }),
       )
-      .mockImplementation(async (url) => historyResponse(url));
+      .mockImplementation(async (url) => {
+        const now = Date.parse("2026-11-19T12:07:00Z");
+        const client = createRdpClient({
+          mode: "fixture",
+          transport: createFixtureTransport(() => now),
+        });
+        const rainfall = await loadChartHistory(
+          client,
+          stone.measurementId,
+          stone.kind,
+          rangeWindow("30d", now),
+        );
+        return historyResponse(url, rainfall);
+      });
     vi.stubGlobal("fetch", (url: Parameters<typeof fetch>[0], init?: RequestInit) =>
       String(url).startsWith("/api/measurements/comparison")
         ? fetchHistory(url, init)
@@ -860,6 +885,12 @@ describe("measurement explorer", () => {
       "/api/measurements/comparison?a=ea-shardlow-level&b=ea-stone-rainfall&range=30d",
     );
     expect(await chart.findByText("Showing 30 days for 2 measurements")).toBeInTheDocument();
+    const view = chart.getByRole("combobox", { name: "Rainfall view" });
+    expect(view).toHaveDisplayValue("Rolling 24-hour total");
+    await user.selectOptions(view, "hourly");
+    expect(chart.getByRole("group", { name: /^Shared timeline/ })).toHaveAccessibleName(
+      /mm · Hourly totals/,
+    );
     await act(async () => finishOldHistory(new Response(null, { status: 503 })));
     expect(chart.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "River map" })).toBe(map);

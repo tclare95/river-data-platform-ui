@@ -1,5 +1,10 @@
 import type { HistoryResult, PublicObservation } from "@/lib/history/load";
-import { rainfallBounds, type RainfallInterval } from "@/lib/history/rainfall";
+import {
+  rainfallBounds,
+  visibleRainfallIntervals,
+  type RainfallInterval,
+} from "@/lib/history/rainfall";
+import type { RainfallTotal } from "@/lib/history/rainfall-totals";
 import { parseRange, type HistoryRange } from "@/lib/history/range";
 import { formatPeriod } from "@/lib/format";
 import { parameterLabel } from "@/lib/labels";
@@ -77,7 +82,7 @@ export function needsMoreCompareAxes(measurements: readonly PublicMeasurement[])
   return comparisonAxes(measurements, (item) => item).length > MAX_COMPARE_AXES;
 }
 
-export type ComparisonReading = PublicObservation | RainfallInterval;
+export type ComparisonReading = PublicObservation | RainfallInterval | RainfallTotal;
 export type ComparisonSide = { measurement: PublicMeasurement; result: HistoryResult };
 export type AlignedRow = {
   time: string;
@@ -86,7 +91,7 @@ export type AlignedRow = {
 
 export function comparisonReadings(result: HistoryResult): readonly ComparisonReading[] {
   if (result.status !== "ok") return [];
-  return "intervals" in result ? result.intervals : result.observations;
+  return "intervals" in result ? visibleRainfallIntervals(result) : result.observations;
 }
 
 /** Join equal source timestamps or provider labels without moving readings or rounding timestamps. */
@@ -94,7 +99,12 @@ export function alignReadings(series: readonly (readonly ComparisonReading[])[])
   const rows = new Map<string, AlignedRow>();
   for (const [index, readings] of series.entries()) {
     for (const reading of readings) {
-      const time = "label" in reading ? reading.label : reading.observedAt;
+      const time =
+        "expected" in reading
+          ? reading.to
+          : "label" in reading
+            ? reading.label
+            : reading.observedAt;
       const tick = tickKey(time);
       const row = rows.get(tick) ?? { time, readings: Array(series.length).fill(null) };
       row.readings[index] = reading;

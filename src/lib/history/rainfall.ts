@@ -16,10 +16,20 @@ export function rainfallBounds(row: RainfallInterval) {
   return [row.periodStart, row.periodEnd] as const;
 }
 
-export function missingLabels({ from, to, periodSeconds, intervals }: RainfallResult) {
+export function visibleRainfallIntervals({ from, to, intervals }: RainfallResult) {
+  const start = tickKey(from);
+  const end = tickKey(to);
+  return intervals.filter(({ label }) => {
+    const time = tickKey(label);
+    return time >= start && time < end;
+  });
+}
+
+export function missingLabels(history: RainfallResult) {
+  const { from, to, periodSeconds } = history;
   // RDP selects on a UTC label grid, including from and excluding to. Missing labels have no known physical bounds.
   const stride = periodSeconds * 1000;
-  const labels = new Set(intervals.map((row) => tickKey(row.label)));
+  const labels = new Set(visibleRainfallIntervals(history).map((row) => tickKey(row.label)));
   const gaps: Missing[] = [];
   let run: Missing | undefined;
   for (let t = Math.ceil(epochMs(from) / stride) * stride; t < epochMs(to); t += stride) {

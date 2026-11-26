@@ -30,8 +30,8 @@ Everything else is already configured: OIDC (team issuer), the per-environment `
 ## Known limits (post-MVP)
 
 - **Map:** waits for verified coordinates ([RDP #129](https://github.com/tclare95/river-data-platform/issues/129), open).
-- **Rainfall:** detail history shows interval totals. Comparison remains limited to instantaneous measurements.
+- **Rainfall:** station detail opens with accumulated totals and a daily chart. The shared comparison uses a rolling 24-hour total by default. Both retain native and hourly views, and every derived total shows interval or label coverage.
 - **Not-found pages:** a `notFound()` 404 has a correct status and `noindex`, but its HTML body is filled in only by JavaScript. This reproduces with a one-line route on Next 16.4.6; unmatched URLs render fully.
 - **History latency:** each assembled history has a 20-second deadline from the start of its load. Earlier page work, such as loading the latest reading, has its own budget. An in-flight upstream read still has its per-call deadline.
-- **History recency:** 7- and 30-day windows end at the latest whole UTC hour. Readings from that hour onward are outside the window. The detail page shows the latest reading separately.
+- **History recency:** 7- and 30-day windows end at the latest whole UTC hour. Native labels from that hour onward are outside the window. Derived rainfall can include an evidenced period that ends exactly at that hour. The detail page shows the latest reading separately.
 - **Content Security Policy:** a full `script-src` CSP needs per-request nonces.

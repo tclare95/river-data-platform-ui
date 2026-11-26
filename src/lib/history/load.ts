@@ -4,10 +4,10 @@ import { tickKey, type HistoryPage } from "@/lib/rdp/contract";
 import { RdpError } from "@/lib/rdp/errors";
 import { toPublicHistory } from "@/lib/rdp/public";
 import type { HistoryWindow } from "./range";
+import { rainfallReadWindow } from "./rainfall-totals";
 
 /**
- * RDP's default page size. The detail page and `/api/measurements/{id}/history` use the same window and limit, so
- * they share one cached first page.
+ * RDP's default page size. Callers share the cached first page when their window and limit match.
  */
 export const HISTORY_PAGE_LIMIT = 2000;
 /**
@@ -203,4 +203,43 @@ async function readHistory(
       return { status: "unavailable" };
     }
   }
+}
+
+/** Read bounded lookback for rainfall transforms while retaining the selected chart window. */
+export async function loadChartHistory(
+  rdp: RdpClient,
+  id: string,
+  kind: HistoryPage["kind"],
+  window: HistoryWindow,
+): Promise<HistoryResult> {
+  if (kind !== "period_total") return loadHistory(rdp, id, kind, window);
+
+  const result = await loadHistory(rdp, id, kind, rainfallReadWindow(window));
+  if (result.status !== "ok" || !("intervals" in result)) return result;
+
+  const from = tickKey(window.from);
+  const to = tickKey(window.to);
+  const gaps = result.coverage.gaps
+    .filter((gap) => tickKey(gap.from) < to && tickKey(gap.to) > from)
+    .map((gap) => ({
+      ...gap,
+      from: tickKey(gap.from) < from ? window.from : gap.from,
+      to: tickKey(gap.to) > to ? window.to : gap.to,
+    }));
+  return {
+    ...result,
+    ...window,
+    coverage: {
+      status: gaps.some((gap) => gap.reason === "unknown")
+        ? "unknown"
+        : gaps.length > 0
+          ? "partial"
+          : result.coverage.gaps.length > 0
+            ? "complete"
+            : result.coverage.status,
+      gaps,
+    },
+    window: null,
+    windowUnavailable: null,
+  };
 }

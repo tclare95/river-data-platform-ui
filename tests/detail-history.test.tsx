@@ -221,7 +221,7 @@ describe("measurement history on the detail page", () => {
   it("shows fixture rainfall for seven days with a keyboard-accessible readings table", async () => {
     const history = await renderDetail("ea-stone-rainfall");
     expect(
-      await within(history).findByRole("img", { name: /^Rainfall interval totals in mm/ }),
+      await within(history).findByRole("img", { name: /^Rainfall daily totals in mm/ }),
     ).toBeVisible();
     expect(within(history).getByRole("link", { name: "7 days" })).toHaveAttribute(
       "aria-current",
@@ -231,19 +231,21 @@ describe("measurement history on the detail page", () => {
     const summary = within(history).getByText(/^Readings table/);
     await user.click(summary);
     await user.tab();
-    expect(within(history).getByRole("region", { name: "Rainfall readings" })).toHaveFocus();
-    expect(within(history).getByRole("columnheader", { name: "Rainfall (mm)" })).toBeVisible();
-    expect(within(history).getByText(/^No reading for/)).toBeVisible();
-    expect(within(history).getAllByRole("rowheader")[0].querySelectorAll("time")).toHaveLength(2);
+    const readings = within(history).getByRole("region", { name: "Rainfall readings" });
+    expect(readings).toHaveFocus();
+    expect(within(readings).getByRole("columnheader", { name: "Rainfall (mm)" })).toBeVisible();
+    expect(within(readings).getByText(/^No reading for/)).toBeVisible();
+    expect(within(readings).getAllByRole("rowheader")[0].querySelectorAll("time")).toHaveLength(2);
+    const table = within(summary.parentElement!);
     await user.tab();
-    expect(within(history).getByRole("button", { name: "Newer" })).toHaveFocus();
+    expect(table.getByRole("button", { name: "Newer" })).toHaveFocus();
     await user.tab();
     await user.keyboard("{Enter}");
-    expect(within(history).getByText(/^Rows 101–200 of/)).toBeVisible();
-    expect(within(history).getByRole("button", { name: "Older" })).toHaveFocus();
+    expect(table.getByText(/^Rows 101–200 of/)).toBeVisible();
+    expect(table.getByRole("button", { name: "Older" })).toHaveFocus();
   });
 
-  it("shows rainfall across continuation pages without a verified total", async () => {
+  it("derives rainfall totals across continuation pages with coverage", async () => {
     const history = await renderDetail("ea-stone-rainfall", "30d");
     expect(await within(history).findByRole("img", { name: /last 30 days/ })).toBeVisible();
     expect(within(history).getByRole("link", { name: "30 days" })).toHaveAttribute(
@@ -252,9 +254,19 @@ describe("measurement history on the detail page", () => {
     );
     const summary = within(history).getByText(/^Readings table/);
     expect(Number(summary.textContent!.replace(/\D/g, ""))).toBeGreaterThan(2000);
-    expect(history).toHaveTextContent(
-      /\d+ missing · 0 ineligible. No verified total for this range/,
+    for (const label of [
+      "Previous 24 hours",
+      "Previous 48 hours",
+      "Previous 72 hours",
+      "Previous 7 days",
+    ]) {
+      expect(within(history).getByText(label).parentElement).toHaveTextContent(
+        /\d+\/\d+ expected intervals/,
+      );
+    }
+    await userEvent.click(within(history).getByText("Totals table"));
+    expect(within(history).getByRole("table", { name: /^Rainfall totals/ })).toHaveTextContent(
+      "Partial",
     );
-    expect(history).not.toHaveTextContent(/Total across the selected labels/);
   });
 });

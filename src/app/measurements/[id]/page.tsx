@@ -232,6 +232,12 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
   const summary = [measurement.watercourseName, measurement.unit, datum]
     .filter(Boolean)
     .join(" · ");
+  const rainfall = measurement.kind === "period_total";
+  const latestSection = (
+    <div className="mt-8 max-w-copy">
+      <LatestSection measurement={measurement} latest={latest} checkedAt={checkedAt} />
+    </div>
+  );
   return (
     <PageMain>
       {back}
@@ -240,9 +246,7 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
       </div>
       {mode === "fixture" ? <FixtureNote className="mt-4" /> : null}
 
-      <div className="mt-8 max-w-copy">
-        <LatestSection measurement={measurement} latest={latest} checkedAt={checkedAt} />
-      </div>
+      {rainfall ? null : latestSection}
 
       <div className="mt-10">
         <MeasurementHistory measurement={measurement} range={range} />
@@ -259,6 +263,8 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
           </Link>
         </p>
       </div>
+
+      {rainfall ? latestSection : null}
 
       <section aria-labelledby="details" className="mt-10 max-w-copy">
         <h2 id="details" className="text-lg font-semibold tracking-tight">

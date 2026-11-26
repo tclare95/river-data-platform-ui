@@ -1,5 +1,5 @@
 import "server-only";
-import { loadHistory, type HistoryResult } from "@/lib/history/load";
+import { loadChartHistory, type HistoryResult } from "@/lib/history/load";
 import { rangeWindow, type HistoryRange, type HistoryWindow } from "@/lib/history/range";
 import { parameterLabel } from "@/lib/labels";
 import { publicMeasurements, toPublicMeasurement, type PublicMeasurement } from "@/lib/rdp/public";
@@ -45,7 +45,12 @@ async function loadComparisonHistory(
   window: HistoryWindow,
 ): Promise<HistoryResult> {
   try {
-    return await loadHistory(getRdpClient(), measurement.measurementId, measurement.kind, window);
+    return await loadChartHistory(
+      getRdpClient(),
+      measurement.measurementId,
+      measurement.kind,
+      window,
+    );
   } catch {
     return { status: "unavailable" };
   }
