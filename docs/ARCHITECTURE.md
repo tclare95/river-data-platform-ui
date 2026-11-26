@@ -213,6 +213,14 @@ These are display thresholds for small fluctuations. The remaining rates are ris
 - **Detail** (`/measurements/{measurementId}`): RDP's measurement ID is the stable URL. `layout.tsx` resolves the ID against the cached catalogue _before_ any streaming, so unknown, malformed and non-displayable IDs return a real 404 (indistinguishable from each other); the page then reads latest under its own `loading.tsx`.
 - Provider quality is shown only when it is a plain word (EA gauge quality arrives as raw JSON text); structured values are omitted, not printed.
 
+## Shareable Explorer views
+
+Explorer query parameters carry the public station or river point, map viewport and visible layers, comparison IDs, rolling 7- or 30-day range, rainfall transformation and per-series offsets. The copy action uses only those validated fields and the selected catalogue type. Free-text search, unrelated parameters and fragments stay out of copied links.
+
+Explorer checks comparison IDs against its public catalogue and the existing axis limit before requesting history. Restoring a view uses the existing read-only history, river trace and area inventory routes. The history window still ends at the latest whole UTC hour.
+
+Native browser history records deliberate selections and applied chart changes. Search typing and completed map moves update the current entry. Back and Forward restore state from the URL without a server navigation.
+
 ## Deployment configuration
 
 Each step is a separately approved operator action ([RDP PRODUCTION-READ-API.md#rdp-ui-caller](https://github.com/tclare95/river-data-platform/blob/main/docs/PRODUCTION-READ-API.md#rdp-ui-caller)):

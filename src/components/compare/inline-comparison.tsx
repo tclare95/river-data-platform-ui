@@ -6,6 +6,7 @@ import { RangeNav } from "@/components/history/history-controls";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { compareParams, type ComparisonHistory } from "@/lib/compare";
 import { HISTORY_RANGES, type HistoryRange } from "@/lib/history/range";
+import type { ComparisonPresentation } from "@/lib/explorer-state";
 
 const ComparisonBody = lazy(async () => ({
   default: (await import("./comparison-body")).ComparisonBody,
@@ -13,12 +14,18 @@ const ComparisonBody = lazy(async () => ({
 
 type Result = ComparisonHistory | "unavailable" | "too_large";
 
+type PresentationProps = {
+  presentation: ComparisonPresentation;
+  onPresentationChange: (presentation: ComparisonPresentation) => void;
+};
+
 function InlineHistory({
   query,
   range,
   count,
   statusId,
-}: {
+  ...presentationProps
+}: PresentationProps & {
   query: string;
   range: HistoryRange;
   count: number;
@@ -91,6 +98,7 @@ function InlineHistory({
         window={result.window}
         range={range}
         statusId={statusId}
+        {...presentationProps}
       />
     </Suspense>
   );
@@ -100,7 +108,8 @@ export function InlineComparison({
   ids,
   range,
   onRangeChange,
-}: {
+  ...presentationProps
+}: PresentationProps & {
   ids: readonly string[];
   range: HistoryRange;
   onRangeChange: (range: HistoryRange) => void;
@@ -123,6 +132,7 @@ export function InlineComparison({
           range={range}
           count={ids.length}
           statusId={statusId}
+          {...presentationProps}
         />
       </div>
     </section>

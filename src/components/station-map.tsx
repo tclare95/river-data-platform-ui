@@ -20,12 +20,15 @@ import {
 import { ErrorState } from "@/components/states";
 import type { StationGroup } from "@/lib/discovery";
 import { measurementPath, parameterLabel } from "@/lib/labels";
+import { writeExplorerParams } from "@/lib/explorer-state";
 import {
   GB_BOUNDS,
   LOCATION_ZOOM,
   MAX_MAP_ZOOM,
-  replaceExplorerParams,
-  type readMapContext,
+  mapSelectionParams,
+  mapViewParams,
+  readMapContext,
+  type MapContext,
 } from "@/lib/map-context";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 import type { RiverDirection } from "@/lib/rdp/river-tracer";
@@ -75,23 +78,30 @@ export function StationMap({
   stations,
   items,
   filteredStationIds,
-  initialView,
-  initialStationId,
-  initialTrace,
+  initialContext,
+  onMapUrlChange,
   comparisonAction,
 }: {
   stations: readonly LocatedStation[];
   items: readonly OverviewItem[];
   filteredStationIds: ReadonlySet<string>;
-  initialView?: ReturnType<typeof readMapContext>["view"];
-  initialStationId?: string;
-  initialTrace?: ReturnType<typeof readMapContext>["trace"];
+  initialContext: MapContext;
+  onMapUrlChange: (context: MapContext) => void;
   comparisonAction: (measurement: PublicMeasurement) => ReactNode;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const focusSelection = useRef(false);
   const detailsId = useId();
+  const { view: initialView, station: initialStationId, trace: initialTrace } = initialContext;
+  const pushMapChange = useRef(false);
+  const writeMap = useCallback(
+    (params: Record<string, string | undefined>, push = false) => {
+      writeExplorerParams(params, push);
+      onMapUrlChange(readMapContext(new URLSearchParams(location.search)));
+    },
+    [onMapUrlChange],
+  );
   const [initialStation] = useState(() =>
     stations.find(({ stationId }) => stationId === initialStationId),
   );
@@ -101,6 +111,7 @@ export function StationMap({
       const { longitude, latitude } = initialStation.position;
       return { center: [longitude, latitude] as TracePoint, zoom: LOCATION_ZOOM };
     }
+    if (initialTrace) return { center: initialTrace.point, zoom: LOCATION_ZOOM };
     return { bounds: GB_BOUNDS, fitBoundsOptions: { padding: 20, duration: 0 } };
   });
   const [styleReady, setStyleReady] = useState(false);
@@ -109,31 +120,42 @@ export function StationMap({
     library: typeof import("maplibre-gl");
   }>();
   const [status, setStatus] = useState<"loading" | "ready" | "tiles" | "unavailable">("loading");
-  const [selectedId, select] = useState(initialStation?.stationId);
-  const [inventoryKey, selectInventoryKey] = useState<string>();
+  const [selectedId, select] = useState(initialStationId);
+  const [inventoryKey, selectInventoryKey] = useState(initialContext.inventory);
   const [browseInventory, setBrowseInventory] = useState(0);
   const showInventoryPicker = useCallback(() => setBrowseInventory((value) => value + 1), []);
   const inventoryHeading = useRef<HTMLHeadingElement>(null);
   const focusInventory = useRef(false);
-  const selectInventory = useCallback((station: InventoryStation) => {
-    select(undefined);
-    selectInventoryKey(station.key);
-    if (inventoryHeading.current?.dataset.stationKey === station.key)
-      inventoryHeading.current.focus();
-    else focusInventory.current = true;
-  }, []);
-  const [showStations, setShowStations] = useState(!!initialStation);
-  const [tracing, setTracing] = useState(true);
+  const selectInventory = useCallback(
+    (station: InventoryStation) => {
+      if (selectedId || inventoryKey !== station.key) pushMapChange.current = true;
+      select(undefined);
+      selectInventoryKey(station.key);
+      if (inventoryHeading.current?.dataset.stationKey === station.key)
+        inventoryHeading.current.focus();
+      else focusInventory.current = true;
+    },
+    [inventoryKey, selectedId],
+  );
+  const [showStations, setShowStations] = useState(
+    initialContext.showStations ?? !!initialStationId,
+  );
+  const [tracing, setTracing] = useState(initialContext.tracing !== false);
   const [direction, setDirection] = useState<RiverDirection>(initialTrace?.direction ?? "upstream");
   const [trace, setTrace] = useState<Trace | undefined>(() =>
     initialTrace
-      ? { point: initialTrace.point, showCatchment: initialTrace.showCatchment }
+      ? {
+          point: initialTrace.point,
+          showCatchment: initialTrace.showCatchment,
+          hiddenRoutes: initialTrace.hiddenRoutes,
+        }
       : undefined,
   );
   const request = useRef<AbortController>(null);
   const discoveryRequest = useRef<AbortController>(null);
 
   const clearTrace = () => {
+    if (trace) pushMapChange.current = true;
     request.current?.abort();
     discoveryRequest.current?.abort();
     setTrace(undefined);
@@ -226,6 +248,7 @@ export function StationMap({
   const catchment = useMemo(() => traceCatchment(upstreamResult), [upstreamResult]);
   const selectPoint = useCallback(
     (point: TracePoint) => {
+      pushMapChange.current = true;
       setDirection("upstream");
       void traceFrom(point, "upstream");
     },
@@ -264,8 +287,12 @@ export function StationMap({
   }, [stations, matchedStations]);
   const selected = mappedStations.find((station) => station.stationId === selectedId);
 
-  // Catchment-only stations may go away when a new point or release is selected.
-  if (selectedId && !selected) select(undefined);
+  const awaitingCatchment =
+    initialTrace &&
+    point === initialTrace.point &&
+    (!upstreamResult || (!!catchment && (!discovery || discovery.status === "loading"))) &&
+    !trace?.error;
+  const sharedStationId = selected || awaitingCatchment ? selectedId : undefined;
 
   useEffect(() => {
     let active = true;
@@ -305,11 +332,16 @@ export function StationMap({
         });
         setRenderer({ map, library });
         if (initialTrace) {
-          const { point, direction, showCatchment } = initialTrace;
-          const previous = { point, showCatchment };
+          const { point, direction, showCatchment, hiddenRoutes, bothDirections } = initialTrace;
+          const previous = { point, showCatchment, hiddenRoutes };
           void traceFrom(point, direction, previous).then((result) => {
-            if (active && result?.matchStatus === "Matched" && direction === "downstream") {
-              void traceFrom(point, "upstream", { ...previous, downstream: result });
+            if (
+              active &&
+              result?.matchStatus === "Matched" &&
+              (direction === "downstream" || bothDirections)
+            ) {
+              const other = direction === "downstream" ? "upstream" : "downstream";
+              void traceFrom(point, other, { ...previous, [direction]: result });
             }
           });
         }
@@ -380,17 +412,15 @@ export function StationMap({
     if (!map || unavailable) return;
     const onMoveEnd = () => {
       const { lng, lat } = map.getCenter().wrap();
-      replaceExplorerParams({
-        lon: lng.toFixed(6),
-        lat: Math.max(-85, Math.min(lat, 85)).toFixed(6),
-        zoom: map.getZoom().toFixed(3),
-      });
+      writeMap(
+        mapViewParams({ center: [lng, Math.max(-85, Math.min(lat, 85))], zoom: map.getZoom() }),
+      );
     };
     map.on("moveend", onMoveEnd);
     return () => {
       map.off("moveend", onMoveEnd);
     };
-  }, [map, unavailable]);
+  }, [map, unavailable, writeMap]);
 
   useEffect(() => {
     if (!map || !tracing || unavailable) return;
@@ -413,16 +443,36 @@ export function StationMap({
   const upstream = traceGeometry(upstreamResult);
   const downstream = traceGeometry(trace?.downstream);
   const showCatchment = trace?.showCatchment !== false;
-  const shareCatchment = !!catchment || trace?.showCatchment !== undefined;
+  const sharedCatchment = catchment ? showCatchment : trace?.showCatchment;
+  const hiddenRoutes = trace?.hiddenRoutes;
+  const bothDirections =
+    (!!trace?.upstream && !!trace?.downstream) ||
+    (point === initialTrace?.point && initialTrace?.bothDirections);
   useEffect(() => {
-    replaceExplorerParams({
-      station: selectedId,
-      traceLon: point?.[0].toFixed(8),
-      traceLat: point?.[1].toFixed(8),
-      direction: point ? direction : undefined,
-      catchment: point && shareCatchment ? (showCatchment ? "show" : "hide") : undefined,
+    const params = mapSelectionParams({
+      station: sharedStationId,
+      inventory: inventoryKey,
+      showStations: showStations === !!sharedStationId ? undefined : showStations,
+      tracing,
+      trace: point
+        ? { point, direction, showCatchment: sharedCatchment, bothDirections, hiddenRoutes }
+        : undefined,
     });
-  }, [selectedId, point, direction, shareCatchment, showCatchment]);
+    const push = pushMapChange.current;
+    pushMapChange.current = false;
+    writeMap(params, push);
+  }, [
+    sharedStationId,
+    inventoryKey,
+    showStations,
+    tracing,
+    point,
+    direction,
+    sharedCatchment,
+    bothDirections,
+    hiddenRoutes,
+    writeMap,
+  ]);
   const visibleUpstream = trace?.hiddenRoutes?.upstream ? null : upstream;
   const visibleDownstream = trace?.hiddenRoutes?.downstream ? null : downstream;
   useEffect(() => {
@@ -472,6 +522,7 @@ export function StationMap({
       button.onclick = () => {
         if (heading.current?.dataset.stationId === stationId) heading.current.focus();
         else focusSelection.current = true;
+        if (inventoryKey || selectedId !== stationId) pushMapChange.current = true;
         selectInventoryKey(undefined);
         select(stationId);
       };
@@ -486,6 +537,7 @@ export function StationMap({
     unavailable,
     filteredStationIds,
     selectedId,
+    inventoryKey,
     showStations,
   ]);
 
@@ -520,6 +572,7 @@ export function StationMap({
               aria-pressed={tracing}
               className="aria-pressed:border-accent aria-pressed:bg-accent-soft"
               onClick={() => {
+                pushMapChange.current = true;
                 if (tracing) clearTrace();
                 setTracing(!tracing);
               }}
@@ -530,7 +583,10 @@ export function StationMap({
               <Button
                 aria-pressed={showStations}
                 className="aria-pressed:border-accent aria-pressed:bg-accent-soft"
-                onClick={() => setShowStations(!showStations)}
+                onClick={() => {
+                  pushMapChange.current = true;
+                  setShowStations(!showStations);
+                }}
               >
                 Published stations
               </Button>
@@ -545,6 +601,8 @@ export function StationMap({
                     disabled={!point || (!trace?.upstream && !trace?.downstream && !trace?.error)}
                     onChange={(event) => {
                       const next = event.target.value as RiverDirection;
+                      if (next === direction) return;
+                      pushMapChange.current = true;
                       setDirection(next);
                       if (trace) void traceFrom(trace.point, next, trace);
                     }}
@@ -667,6 +725,7 @@ export function StationMap({
                           checked={!trace.hiddenRoutes?.[layer]}
                           onChange={(event) => {
                             const hidden = !event.target.checked;
+                            pushMapChange.current = true;
                             setTrace(
                               (current) =>
                                 current && {
@@ -691,15 +750,16 @@ export function StationMap({
                   {catchment ? (
                     <Button
                       className="min-h-11"
-                      onClick={() =>
+                      onClick={() => {
+                        pushMapChange.current = true;
                         setTrace(
                           (current) =>
                             current && {
                               ...current,
                               showCatchment: current.showCatchment === false,
                             },
-                        )
-                      }
+                        );
+                      }}
                     >
                       {showCatchment ? "Hide catchment" : "Show catchment"}
                     </Button>
@@ -735,6 +795,7 @@ export function StationMap({
             if (upstreamResult) void findMeasurements(trace.point, upstreamResult);
           }}
           refreshTrace={() => {
+            pushMapChange.current = true;
             setDirection("upstream");
             void traceFrom(trace.point, "upstream");
           }}

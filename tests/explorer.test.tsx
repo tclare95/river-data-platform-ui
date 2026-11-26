@@ -8,7 +8,8 @@ import { loadChartHistory, type HistoryResult } from "@/lib/history/load";
 import { rangeWindow } from "@/lib/history/range";
 import { createRdpClient } from "@/lib/rdp/client";
 import { createFixtureTransport } from "@/lib/rdp/fixture";
-import { GB_BOUNDS, readMapContext } from "@/lib/map-context";
+import { GB_BOUNDS } from "@/lib/map-context";
+import { readExplorerState } from "@/lib/explorer-state";
 import type { OverviewItem } from "@/lib/overview";
 import { publicMeasurements, toPublicLatest, toPublicMeasurement } from "@/lib/rdp/public";
 import type { PublicUpstreamMeasurements } from "@/lib/rdp/upstream-measurements";
@@ -474,7 +475,7 @@ describe("measurement explorer", () => {
       <MeasurementExplorer
         items={items}
         initialQuery={{ q: "stone", type: null }}
-        initialMapContext={readMapContext({ station })}
+        initialState={readExplorerState({ station })}
       />,
     );
     expect(
@@ -1117,6 +1118,8 @@ describe("measurement explorer", () => {
       /Stone rainfall \(\+30 min\).*Hourly totals/,
     );
     expect(fetchHistory).toHaveBeenCalledTimes(2);
+    expect(new URLSearchParams(location.search).get("rain")).toBe("hourly");
+    expect(new URLSearchParams(location.search).get("ob")).toBe("30");
     await act(async () => finishOldHistory(new Response(null, { status: 503 })));
     expect(chart.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "River map" })).toBe(map);
@@ -1218,6 +1221,131 @@ describe("measurement explorer", () => {
     expect(new URLSearchParams(window.location.search).has("c")).toBe(false);
     expect(mapMock.create).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("region", { name: "River map" })).toBe(map);
+  });
+
+  it("copies a clean link and restores its applied transforms using direct navigation and Back/Forward", async () => {
+    addPublishedPositions();
+    const now = Date.parse("2026-11-19T12:07:00Z");
+    const client = createRdpClient({
+      mode: "fixture",
+      transport: createFixtureTransport(() => now),
+    });
+    const rainfall = await loadChartHistory(
+      client,
+      "ea-stone-rainfall",
+      "period_total",
+      rangeWindow("30d", now),
+    );
+    const fetchHistory = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async (url) => historyResponse(url, rainfall));
+    vi.stubGlobal("fetch", fetchHistory);
+    window.history.replaceState(
+      null,
+      "",
+      "/?a=ea-shardlow-level&b=ea-stone-rainfall&c=ea-unpublished&range=30d&rain=hourly&ob=30&q=private&token=secret#main",
+    );
+    const user = userEvent.setup();
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockRejectedValueOnce(new Error("Blocked"));
+    const { unmount } = render(<MeasurementExplorer items={items} />);
+    const chart = () => within(screen.getByRole("region", { name: "Comparison history" }));
+    expect(await chart().findByRole("combobox", { name: "Rainfall view" })).toHaveValue("hourly");
+    expect(chart().getByRole("group", { name: /^Shared timeline/ })).toHaveAccessibleName(
+      /Stone rainfall \(\+30 min\)/,
+    );
+    expect(screen.getByText(/Some measurements in this link/)).toBeInTheDocument();
+    expect(
+      fetchHistory.mock.calls.map(([url, options]) => [url, options?.method ?? "GET"]),
+    ).toEqual([
+      ["/api/measurements/comparison?a=ea-shardlow-level&b=ea-stone-rainfall&range=30d", "GET"],
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Copy Explorer link" }));
+    const url = new URL(
+      (screen.getByRole("textbox", { name: "Copy this link" }) as HTMLInputElement).value,
+    );
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      a: "ea-shardlow-level",
+      b: "ea-stone-rainfall",
+      range: "30d",
+      rain: "hourly",
+      ob: "30",
+    });
+    expect(url.hash).toBe("");
+    await user.click(screen.getByRole("button", { name: "Copy Explorer link" }));
+    expect(write).toHaveBeenLastCalledWith(url.href);
+    expect(screen.getByText("Link copied")).toBeInTheDocument();
+
+    unmount();
+    window.history.replaceState(null, "", url);
+    render(<MeasurementExplorer items={items} />);
+    const view = await chart().findByRole("combobox", { name: "Rainfall view" });
+    expect(view).toHaveValue("hourly");
+    await user.selectOptions(view, "native");
+    const historyLength = history.length;
+    await screen.findByRole("button", { name: "Trace river" });
+    act(() => mapMock.events.dispatchEvent(new Event("moveend")));
+    act(() => mapMock.events.dispatchEvent(new Event("moveend")));
+    expect(history.length).toBe(historyLength);
+    await act(async () => {
+      const popped = new Promise((resolve) =>
+        window.addEventListener("popstate", resolve, { once: true }),
+      );
+      history.back();
+      await popped;
+    });
+    expect(chart().getByRole("combobox", { name: "Rainfall view" })).toHaveValue("hourly");
+    expect(chart().getByRole("group", { name: /^Shared timeline/ })).toHaveAccessibleName(
+      /Stone rainfall \(\+30 min\)/,
+    );
+    await act(async () => {
+      const popped = new Promise((resolve) =>
+        window.addEventListener("popstate", resolve, { once: true }),
+      );
+      history.forward();
+      await popped;
+    });
+    expect(chart().getByRole("combobox", { name: "Rainfall view" })).toHaveValue("native");
+    expect(fetchHistory).toHaveBeenCalledTimes(2);
+  });
+
+  it("restores a station and map controls when traversing Explorer history", async () => {
+    addPublishedPositions();
+    const user = userEvent.setup();
+    render(<MeasurementExplorer items={items} />);
+    await enableStations(user);
+    const map = () => within(screen.getByRole("region", { name: "River map" }));
+    await user.click(map().getByRole("button", { name: "Shardlow" }));
+    const station = new URLSearchParams(location.search).get("station");
+    const details = () =>
+      document.getElementById(
+        map().getByRole("button", { name: "Shardlow" }).getAttribute("aria-controls")!,
+      )!;
+    expect(within(details()).getByRole("heading", { name: "Shardlow" })).toBeInTheDocument();
+
+    await act(async () => {
+      const popped = new Promise((resolve) =>
+        window.addEventListener("popstate", resolve, { once: true }),
+      );
+      history.back();
+      await popped;
+    });
+    await map().findByRole("button", { name: "Shardlow" });
+    expect(within(details()).queryByRole("heading", { name: "Shardlow" })).not.toBeInTheDocument();
+    expect(new URLSearchParams(location.search).has("station")).toBe(false);
+
+    await act(async () => {
+      const popped = new Promise((resolve) =>
+        window.addEventListener("popstate", resolve, { once: true }),
+      );
+      history.forward();
+      await popped;
+    });
+    await map().findByRole("button", { name: "Shardlow" });
+    expect(within(details()).getByRole("heading", { name: "Shardlow" })).toBeInTheDocument();
+    expect(new URLSearchParams(location.search).get("station")).toBe(station);
   });
 
   it("ignores a discovery response for an old point and qualifies empty results", async () => {

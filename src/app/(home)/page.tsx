@@ -3,9 +3,7 @@ import { PageMain } from "@/components/container";
 import { MeasurementExplorer } from "@/components/measurement-explorer";
 import { PageHeader } from "@/components/page-header";
 import { Attribution, FixtureNote } from "@/components/provenance";
-import { readCompareQuery } from "@/lib/compare";
-import { readQuery } from "@/lib/discovery";
-import { readMapContext } from "@/lib/map-context";
+import { readExplorerState } from "@/lib/explorer-state";
 import { loadOverview } from "@/lib/overview";
 
 export default async function HomePage({ searchParams }: PageProps<"/">) {
@@ -22,9 +20,7 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
         <MeasurementExplorer
           items={overview.status === "ok" ? overview.items : []}
           catalogueUnavailable={overview.status === "unavailable"}
-          initialQuery={readQuery(params)}
-          initialComparison={readCompareQuery(params)}
-          initialMapContext={readMapContext(params)}
+          initialState={readExplorerState(params)}
         />
         {overview.status === "ok" && overview.items.length > 0 ? (
           <Attribution measurements={overview.items.map((item) => item.measurement)} />

@@ -16,6 +16,7 @@ import {
   type ComparisonSide,
 } from "@/lib/compare";
 import { comparisonOffsetLabel, MAX_COMPARISON_OFFSET } from "@/lib/compare-time";
+import { DEFAULT_RAINFALL_MODE, type ComparisonPresentation } from "@/lib/explorer-state";
 import { HISTORY_RANGES, type HistoryRange, type HistoryWindow } from "@/lib/history/range";
 import { missingLabels, rainfallBounds, visibleRainfallIntervals } from "@/lib/history/rainfall";
 import { rainfallTotals, type RainfallMode } from "@/lib/history/rainfall-totals";
@@ -35,7 +36,9 @@ function OffsetControl({
   offset: number;
   onChange: (offset: number) => void;
 }) {
-  const [draft, setDraft] = useState(String(offset));
+  const [edit, setEdit] = useState({ offset, value: String(offset) });
+  if (edit.offset !== offset) setEdit({ offset, value: String(offset) });
+  const draft = edit.value;
   return (
     <form
       onSubmit={(event) => {
@@ -60,7 +63,7 @@ function OffsetControl({
             max={MAX_COMPARISON_OFFSET}
             step={1}
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => setEdit({ offset, value: event.target.value })}
             className="min-h-10 w-28 rounded border border-line-strong bg-surface px-2"
           />
         </label>
@@ -68,7 +71,7 @@ function OffsetControl({
         <Button
           type="button"
           onClick={() => {
-            setDraft("0");
+            setEdit({ offset: 0, value: "0" });
             onChange(0);
           }}
         >
@@ -138,16 +141,28 @@ export function ComparisonBody({
   window,
   range,
   statusId,
+  presentation,
+  onPresentationChange,
 }: {
   sides: ComparisonSide[];
   window: HistoryWindow;
   range: HistoryRange;
   statusId: string;
+  presentation?: ComparisonPresentation;
+  onPresentationChange?: (presentation: ComparisonPresentation) => void;
 }) {
   const span = HISTORY_RANGES[range].label;
-  const [offsetById, setOffsetById] = useState<Record<string, number>>({});
+  const [localPresentation, setLocalPresentation] = useState<ComparisonPresentation>({
+    offsets: {},
+    mode: DEFAULT_RAINFALL_MODE,
+  });
+  const { mode, offsets: offsetById } = presentation ?? localPresentation;
+  const updatePresentation = onPresentationChange ?? setLocalPresentation;
   const offsets = useMemo(
-    () => sourceSides.map(({ measurement }) => offsetById[measurement.measurementId] ?? 0),
+    () =>
+      sourceSides.map(({ measurement: { measurementId } }) =>
+        Object.hasOwn(offsetById, measurementId) ? offsetById[measurementId] : 0,
+      ),
     [sourceSides, offsetById],
   );
   const sides = useMemo(
@@ -159,7 +174,6 @@ export function ComparisonBody({
     [sourceSides, window, offsets],
   );
   const hasRainfall = sides.some(({ result }) => result.status === "ok" && "intervals" in result);
-  const [mode, setMode] = useState<RainfallMode>("24h");
   const series = useMemo(
     () =>
       sides.map(({ result }) =>
@@ -183,7 +197,12 @@ export function ComparisonBody({
   return (
     <div className="space-y-4">
       <Announce targetId={statusId} text={`Showing ${span} for ${sides.length} measurements`} />
-      {hasRainfall ? <RainfallModeControl mode={mode} onChange={setMode} /> : null}
+      {hasRainfall ? (
+        <RainfallModeControl
+          mode={mode}
+          onChange={(mode) => updatePresentation({ mode, offsets: offsetById })}
+        />
+      ) : null}
       {sides.some(({ result }) => result.status === "ok") ? (
         <details>
           <summary className="cursor-pointer py-2 text-sm font-medium text-accent">
@@ -201,10 +220,10 @@ export function ComparisonBody({
                   label={title(measurement)}
                   offset={offsets[index]}
                   onChange={(offset) =>
-                    setOffsetById((current) => ({
-                      ...current,
-                      [measurement.measurementId]: offset,
-                    }))
+                    updatePresentation({
+                      mode,
+                      offsets: { ...offsetById, [measurement.measurementId]: offset },
+                    })
                   }
                 />
               ) : null,
