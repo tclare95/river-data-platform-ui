@@ -4,12 +4,60 @@ import { useId, useState } from "react";
 import { Button } from "@/components/button";
 import { RainfallTotalValue } from "@/components/history/rainfall-totals";
 import { Time } from "@/components/latest-reading";
-import type { AlignedRow, ComparisonReading } from "@/lib/compare";
+import { comparisonReadingTime, type AlignedRow, type ComparisonReading } from "@/lib/compare";
+import { comparisonOffsetLabel, shiftComparisonTime } from "@/lib/compare-time";
 import { INELIGIBLE_REASON, rainfallBounds } from "@/lib/history/rainfall";
+import { epochMs } from "@/lib/rdp/contract";
 
 export const COMPARE_ROWS_PER_PAGE = 100;
 
-type ComparisonColumn = { id: string; label: string; unit: string; rainfall: boolean };
+const inspectionTime = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  timeZoneName: "short",
+});
+
+export function InspectionTime({ value }: { value: string }) {
+  return <time dateTime={value}>{inspectionTime.format(epochMs(value))}</time>;
+}
+
+type ComparisonColumn = {
+  id: string;
+  label: string;
+  unit: string;
+  rainfall: boolean;
+  offset?: number;
+};
+
+export function ComparisonTime({
+  reading,
+  offset,
+}: {
+  reading: ComparisonReading;
+  offset: number;
+}) {
+  const time = comparisonReadingTime(reading);
+  const label =
+    "expected" in reading
+      ? "window end"
+      : "label" in reading
+        ? "provider label"
+        : "observation time";
+  return (
+    <span className="block text-ink-muted">
+      <span className="block">
+        Original {label} <InspectionTime value={time} />
+      </span>
+      <span className="block">
+        Displayed {label} <InspectionTime value={shiftComparisonTime(time, offset)} />
+      </span>
+    </span>
+  );
+}
 
 export function ComparisonValue({ reading, unit }: { reading: ComparisonReading; unit?: string }) {
   if ("expected" in reading) return <RainfallTotalValue total={reading} showWindow />;
@@ -43,11 +91,14 @@ export function ComparisonValue({ reading, unit }: { reading: ComparisonReading;
   );
 }
 
-function Cell({ reading }: { reading: ComparisonReading | null }) {
+function Cell({ reading, offset = 0 }: { reading: ComparisonReading | null; offset?: number }) {
   return (
     <td className="px-4 py-2 text-right align-top">
       {reading ? (
-        <ComparisonValue reading={reading} />
+        <>
+          <ComparisonValue reading={reading} />
+          {offset !== 0 ? <ComparisonTime reading={reading} offset={offset} /> : null}
+        </>
       ) : (
         <span className="text-ink-muted">No reading</span>
       )}
@@ -90,13 +141,15 @@ export function ComparisonTable({
           <thead className="border-b border-line text-ink-muted">
             <tr>
               <th scope="col" className="px-4 py-2.5 font-medium">
-                {columns.some(({ rainfall }) => rainfall)
-                  ? "Observation time or rainfall window end / label"
-                  : "Observed"}
+                {columns.some(({ offset }) => offset)
+                  ? "Displayed time"
+                  : columns.some(({ rainfall }) => rainfall)
+                    ? "Observation time or rainfall window end / label"
+                    : "Observed"}
               </th>
-              {columns.map(({ id, label, unit }) => (
+              {columns.map(({ id, label, unit, offset }) => (
                 <th key={id} scope="col" className="px-4 py-2.5 text-right font-medium">
-                  {label} ({unit})
+                  {label} ({unit}){offset ? ` · ${comparisonOffsetLabel(offset)}` : ""}
                 </th>
               ))}
             </tr>
@@ -107,8 +160,8 @@ export function ComparisonTable({
                 <th scope="row" className="px-4 py-2 font-normal whitespace-nowrap">
                   <Time value={row.time} />
                 </th>
-                {columns.map(({ id }, index) => (
-                  <Cell key={id} reading={row.readings[index]} />
+                {columns.map(({ id, offset }, index) => (
+                  <Cell key={id} reading={row.readings[index]} offset={offset} />
                 ))}
               </tr>
             ))}

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/measurements/comparison/route";
-import type { ComparisonSide } from "@/lib/compare";
+import { alignReadings, comparisonWindowResult, type ComparisonHistory } from "@/lib/compare";
 import { rainfallTotals } from "@/lib/history/rainfall-totals";
 import { createRdpClient, type RdpClient } from "@/lib/rdp/client";
 import { RdpError } from "@/lib/rdp/errors";
@@ -43,7 +43,8 @@ describe("inline comparison history", () => {
   it("returns public level and interval data and shares unchanged history across selections", async () => {
     const response = await request(`${pair}&range=30d`);
     expect(response.status).toBe(200);
-    const { data } = (await response.json()) as { data: ComparisonSide[] };
+    const { data, window } = (await response.json()) as ComparisonHistory;
+    expect(window).toEqual({ from: "2026-10-20T12:00:00.000Z", to: "2026-11-19T12:00:00.000Z" });
     expect(data).toMatchObject([
       {
         measurement: { measurementId: "ea-shardlow-level", datum: "ASD" },
@@ -60,16 +61,16 @@ describe("inline comparison history", () => {
     for (const [{ path, query }] of calls) {
       const rainfall = path.endsWith("/ea-stone-rainfall/observations");
       expect(query).toMatchObject({
-        from: rainfall ? "2026-10-13T12:00:00.000Z" : "2026-10-20T12:00:00.000Z",
-        to: rainfall ? "2026-11-19T12:00:00.001Z" : "2026-11-19T12:00:00.000Z",
+        from: rainfall ? "2026-10-12T12:00:00.000Z" : "2026-10-19T12:00:00.000Z",
+        to: rainfall ? "2026-11-19T12:07:00.001Z" : "2026-11-19T12:07:00.000Z",
         limit: "2000",
       });
     }
     const rain = data[1].result;
     if (rain.status !== "ok" || !("intervals" in rain))
       throw new Error("Expected rainfall history");
-    expect(rain.from).toBe("2026-10-20T12:00:00.000Z");
-    expect(rain.intervals[0].label).toMatch(/^2026-10-13/);
+    expect(rain.from).toBe("2026-10-19T12:00:00.000Z");
+    expect(rain.intervals[0].label).toMatch(/^2026-10-12/);
     expect(rain.intervals.length).toBeGreaterThan(3000);
     expect(rainfallTotals(rain, "7d")[0]).toMatchObject({
       to: rain.from,
@@ -78,6 +79,18 @@ describe("inline comparison history", () => {
       status: "complete",
       basis: "verified",
     });
+    const earlyRain = comparisonWindowResult(rain, window, 1440);
+    if (earlyRain.status !== "ok" || !("intervals" in earlyRain)) throw new Error("Expected rain");
+    const earliestTotal = rainfallTotals(earlyRain, "7d")[0];
+    expect(earliestTotal).toMatchObject({ to: "2026-10-19T12:00:00.000Z", status: "complete" });
+    expect(alignReadings([[earliestTotal]], [1440])[0].time).toBe(window.from);
+
+    const halfHourRain = comparisonWindowResult(rain, window, -30);
+    if (halfHourRain.status !== "ok" || !("intervals" in halfHourRain))
+      throw new Error("Expected rain");
+    const rolling = rainfallTotals(halfHourRain, "24h");
+    expect(rolling[0]).toMatchObject({ to: "2026-10-20T13:00:00.000Z", status: "complete" });
+    expect(alignReadings([rolling], [-30])[0].time).toBe("2026-11-19T11:30:00.000Z");
     transport.mockClear();
     const reordered = await request("a=ea-stone-rainfall&b=ea-shardlow-level&range=30d");
     expect(reordered.status).toBe(200);

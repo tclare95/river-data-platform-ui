@@ -1,4 +1,5 @@
 import "server-only";
+import { comparisonSourceWindow, MAX_COMPARISON_OFFSET } from "@/lib/compare-time";
 import { loadChartHistory, type HistoryResult } from "@/lib/history/load";
 import { rangeWindow, type HistoryRange, type HistoryWindow } from "@/lib/history/range";
 import { parameterLabel } from "@/lib/labels";
@@ -57,12 +58,20 @@ async function loadComparisonHistory(
 }
 
 /** All selected series over one shared window. */
-export function loadComparison(measurements: readonly PublicMeasurement[], range: HistoryRange) {
-  const window = rangeWindow(range, Date.now());
-  return Promise.all(
+export async function loadComparison(
+  measurements: readonly PublicMeasurement[],
+  range: HistoryRange,
+) {
+  const now = Date.now();
+  const window = rangeWindow(range, now);
+  const source = comparisonSourceWindow(window, MAX_COMPARISON_OFFSET);
+  // Include elapsed time past the visible end for negative offsets. Reuse reads within each minute.
+  source.to = new Date(Math.floor(now / 60_000) * 60_000).toISOString();
+  const data = await Promise.all(
     measurements.map(async (measurement) => ({
       measurement,
-      result: await loadComparisonHistory(measurement, window),
+      result: await loadComparisonHistory(measurement, source),
     })),
   );
+  return { window, data };
 }

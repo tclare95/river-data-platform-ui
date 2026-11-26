@@ -160,7 +160,9 @@ export function rainfallTotals(history: RainfallResult, mode: Exclude<RainfallMo
     }
   } else {
     const rolling = mode === "cumulative" ? null : ROLLING_HOURS[mode] * HOUR;
-    for (let end = rolling === null ? from + HOUR : from; end <= to; end += HOUR) {
+    const firstHour = Math.ceil(from / HOUR) * HOUR;
+    const firstEnd = rolling === null && firstHour === from ? from + HOUR : firstHour;
+    for (let end = firstEnd; end <= to; end += HOUR) {
       points.push(total(rolling === null ? from : end - rolling, end));
     }
   }
