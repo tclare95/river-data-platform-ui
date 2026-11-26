@@ -1,3 +1,4 @@
+import Loading from "@/app/(home)/loading";
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createRdpClient, type RdpClient } from "@/lib/rdp/client";
@@ -49,6 +50,12 @@ describe("home page", () => {
     expect(screen.getByRole("searchbox", { name: "Search" })).toBeInTheDocument();
   });
 
+  it("announces catalogue loading before measurements arrive", () => {
+    render(<Loading />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading published measurements");
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
   it("counts published measurements and stations", async () => {
     await renderHome();
     expect(screen.getByText("7 measurements at 6 stations")).toBeInTheDocument();
@@ -92,8 +99,9 @@ describe("home page", () => {
     const section = await renderHome();
     expect(within(section).getByRole("note")).toHaveTextContent("not real observations");
     expect(row("Colwick", "Water level")).toHaveTextContent(/mASD at/);
-    expect(row("Colwick", "Water level")).not.toHaveTextContent("Not recent");
-    expect(row("Kegworth", "Water level")).toHaveTextContent("No observations collected");
+    expect(within(row("Colwick", "Water level")).getByText("Recent")).toBeVisible();
+    expect(row("Colwick", "Water level").querySelector("time")).toHaveAttribute("datetime");
+    expect(row("Kegworth", "Water level")).toHaveTextContent("No latest observation on record");
     expect(row("Kegworth", "Water level").textContent).not.toMatch(READING);
     expect(row("Shardlow", "Flow")).toHaveTextContent("Not recent");
     expect(row("Shardlow", "Water level")).not.toHaveTextContent("Not recent");
@@ -152,7 +160,52 @@ describe("home page", () => {
     getClient = () => client;
     const section = await renderHome();
     expect(within(section).getAllByText("Latest reading unavailable")).toHaveLength(7);
+    expect(section).toHaveTextContent("Latest readings are unavailable for these results.");
     expect(section.textContent).not.toMatch(READING);
+  });
+
+  it("keeps successful results and their metadata when some latest readings fail", async () => {
+    const fixture = createFixtureTransport(() => NOW);
+    const client = fixtureClient("live", async (request) => {
+      const body = (await fixture(request)) as {
+        data: Record<string, unknown>[];
+        meta: Record<string, unknown>;
+      };
+      if (request.path === "/v1/measurements") {
+        for (const item of body.data.filter(({ name }) => name === "Shardlow")) {
+          item.name = "Shardlow Weir";
+          item.watercourse = { name: "River Trent", status: "verified" };
+        }
+      }
+      if (request.path.endsWith("/latest")) {
+        body.meta.partial = true;
+        Object.assign(
+          body.data.find(({ measurementId }) => measurementId === "ea-shardlow-level")!,
+          {
+            status: "unavailable",
+            observedAt: null,
+            value: null,
+            quality: null,
+            freshness: "unknown",
+            errorCode: "STORAGE_UNAVAILABLE",
+          },
+        );
+      }
+      return body;
+    });
+    getClient = () => client;
+    await renderHome();
+    expect(screen.getByText("Some latest readings are unavailable.")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    const station = screen.getByRole("heading", { name: "Shardlow Weir" }).closest("li")!;
+    expect(station).toHaveTextContent("River Trent");
+    expect(station).toHaveTextContent("Environment Agency");
+    expect(row("Shardlow Weir", "Water level")).toHaveTextContent("mASD · Local gauge datum (ASD)");
+    expect(row("Shardlow Weir", "Water level")).toHaveTextContent("Latest reading unavailable");
+    expect(row("Shardlow Weir", "Flow")).toHaveTextContent("Not recent");
+    expect(row("Kegworth", "Water level")).toHaveTextContent("No latest observation on record");
   });
 
   it("shows an honest empty state when nothing publicly displayable is published", async () => {

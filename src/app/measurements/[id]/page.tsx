@@ -5,7 +5,13 @@ import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { PageMain } from "@/components/container";
 import { MeasurementHistory } from "@/components/history/measurement-history";
-import { describeLatest, FRESHNESS_LABEL, NO_DEPTH, Time } from "@/components/latest-reading";
+import {
+  describeLatest,
+  FRESHNESS_LABEL,
+  NO_DEPTH,
+  NO_OBSERVATIONS,
+  Time,
+} from "@/components/latest-reading";
 import { PageHeader } from "@/components/page-header";
 import { Attribution, FixtureNote } from "@/components/provenance";
 import { EmptyState, ErrorState } from "@/components/states";
@@ -15,12 +21,15 @@ import {
   datumLabel,
   datumSummary,
   measurementPath,
+  measurementSummary,
   parameterLabel,
   qualityLabel,
+  stationPositionLabel,
+  watercourseLabel,
 } from "@/lib/labels";
 import { compareHref } from "@/lib/compare";
 import { parseRange } from "@/lib/history/range";
-import { loadMeasurementDetail } from "@/lib/measurement-detail";
+import { loadMeasurementDetail, loadPublishedMeasurement } from "@/lib/measurement-detail";
 import { epochMs } from "@/lib/rdp/contract";
 import type { PublicHealth, PublicLatest, PublicMeasurement } from "@/lib/rdp/public";
 
@@ -28,7 +37,7 @@ type Props = PageProps<"/measurements/[id]">;
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   await connection();
-  const detail = await loadMeasurementDetail((await params).id);
+  const detail = await loadPublishedMeasurement((await params).id);
   if (detail.status !== "ok") return { title: "Measurement" };
   const { name, parameter } = detail.measurement;
   return { title: `${name} ${parameterLabel(parameter).toLowerCase()}` };
@@ -135,9 +144,7 @@ function LatestSection({
     return (
       <section aria-labelledby="latest">
         {heading("Latest reading")}
-        <EmptyState title="No observations collected" className="mt-3">
-          This measurement is published, but no readings have been collected yet.
-        </EmptyState>
+        <EmptyState title={NO_OBSERVATIONS} className="mt-3" />
       </section>
     );
   }
@@ -159,17 +166,12 @@ function LatestSection({
           {view.lead}
           {view.when}
         </p>
-        {view.freshness !== "fresh" ? (
-          <p className="mt-3 font-medium">
-            {FRESHNESS_LABEL[view.freshness]}
-            {stale ? (
-              <span className="font-normal text-ink-muted">
-                {" "}
-                · {age ? `${age} old when checked. ` : ""}No newer reading has been collected.
-              </span>
-            ) : null}
-          </p>
-        ) : null}
+        <p className="mt-3 font-medium">
+          {FRESHNESS_LABEL[view.freshness]}
+          {age ? (
+            <span className="font-normal text-ink-muted"> · {age} old when checked</span>
+          ) : null}
+        </p>
         <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-1 border-t border-line pt-3 text-sm text-ink-muted">
           {quality ? (
             <div className="flex gap-1.5">
@@ -229,7 +231,7 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
   const type = parameterLabel(measurement.parameter);
   const range = parseRange((await searchParams).range);
   const datum = datumSummary(measurement);
-  const summary = [measurement.watercourseName, measurement.unit, datum]
+  const summary = [watercourseLabel(measurement), measurementSummary(measurement)]
     .filter(Boolean)
     .join(" · ");
   return (
@@ -275,6 +277,7 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
             )}
           </Fact>
           <Fact term="Source">{measurement.source.label}</Fact>
+          <Fact term="Position">{stationPositionLabel(measurement)}</Fact>
         </dl>
         <Provenance
           measurement={measurement}

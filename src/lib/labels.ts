@@ -1,4 +1,5 @@
 import { formatPeriod, sentenceCase } from "@/lib/format";
+import type { PublicMeasurement } from "@/lib/rdp/public";
 
 /** Readable names for RDP's published parameters; anything else is shown as published. */
 const PARAMETERS: Readonly<Record<string, string>> = Object.freeze({
@@ -41,6 +42,26 @@ export function datumSummary(measurement: { parameter: string; datum: string }):
     return measurement.parameter === "level" ? "Datum not known" : null;
   if (measurement.datum === "ASD") return "Local gauge datum (ASD)";
   return `Datum ${measurement.datum}`;
+}
+
+export function measurementSummary(measurement: PublicMeasurement): string {
+  const unit = measurement.periodSeconds
+    ? `${measurement.unit} per ${formatPeriod(measurement.periodSeconds)}`
+    : measurement.unit;
+  return [unit, datumSummary(measurement)].filter(Boolean).join(" · ");
+}
+
+export function stationPositionLabel(measurement: PublicMeasurement): string {
+  if (measurement.position)
+    return `Station reference position · ${measurement.position.precisionMetres} m resolution`;
+  if (measurement.locationStatus === "ambiguous") return "Station position ambiguous";
+  if (measurement.locationStatus === "unknown") return "Station position not recorded";
+  return "Station position unknown";
+}
+
+export function watercourseLabel(measurement: PublicMeasurement): string | undefined {
+  if (measurement.watercourseName) return measurement.watercourseName;
+  if (measurement.watercourseStatus === "not_published") return "Watercourse not published";
 }
 
 const QUALITY_WORD = /^[A-Za-z][A-Za-z -]{0,39}$/;

@@ -80,9 +80,11 @@ export const FRESHNESS_LABEL = {
   unknown: "Freshness unknown",
 } as const;
 
+export const NO_OBSERVATIONS = "No latest observation on record";
+
 export const NO_DEPTH = "Depth not reported (quality check failed)";
 
-/** One-line summary for listings. Freshness is mentioned only when it qualifies the reading. */
+/** Compact summary for catalogue results and station selection. */
 export function LatestLine({
   measurement,
   latest,
@@ -94,7 +96,7 @@ export function LatestLine({
   if (view.state === "unavailable")
     return <span className="text-ink-muted">Latest reading unavailable</span>;
   if (view.state === "no_observations")
-    return <span className="text-ink-muted">No observations collected</span>;
+    return <span className="text-ink-muted">{NO_OBSERVATIONS}</span>;
   return (
     <span>
       {view.value ? (
@@ -103,12 +105,10 @@ export function LatestLine({
         <span className="text-ink-muted">{NO_DEPTH}</span>
       )}{" "}
       <span className="text-ink-muted">{view.when}</span>
-      {view.freshness !== "fresh" ? (
-        <span className="whitespace-nowrap">
-          <span className="text-ink-muted"> · </span>
-          <span className="font-medium text-ink">{FRESHNESS_LABEL[view.freshness]}</span>
-        </span>
-      ) : null}
+      <span className="whitespace-nowrap">
+        <span className="text-ink-muted"> · </span>
+        <span className="font-medium text-ink">{FRESHNESS_LABEL[view.freshness]}</span>
+      </span>
     </span>
   );
 }

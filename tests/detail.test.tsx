@@ -58,7 +58,7 @@ describe("measurement detail page", () => {
     expect(latest).toHaveTextContent(/Checked/);
     expect(latest).toHaveTextContent(/Quality\s*Good/);
     expect(latest).not.toHaveTextContent('"Good"');
-    expect(latest).not.toHaveTextContent("Not recent");
+    expect(within(latest).getByText("Recent")).toBeVisible();
     expect(latest.querySelector("time")).toHaveAttribute("datetime");
     expect(fact("Unit")).toHaveTextContent("mASD");
     expect(fact("Datum")).toHaveTextContent("ASD");
@@ -94,6 +94,7 @@ describe("measurement detail page", () => {
     });
     await renderDetail("ea-colwick-level");
     expect(screen.getByText("River Trent · mASD · Local gauge datum (ASD)")).toBeInTheDocument();
+    expect(fact("Position")).toHaveTextContent("Station position ambiguous");
     const source = screen.getByText("Source and collection").closest("details")!;
     source.open = true;
     expect(within(source).getByRole("link", { name: "Environment Agency" })).toHaveAttribute(
@@ -129,7 +130,7 @@ describe("measurement detail page", () => {
   it("says no observations rather than showing zero", async () => {
     await renderDetail("ea-kegworth-level");
     const latest = screen.getByRole("region", { name: "Latest reading" });
-    expect(latest).toHaveTextContent("No observations collected");
+    expect(latest).toHaveTextContent("No latest observation on record");
     expect(latest.textContent).not.toMatch(READING);
     expect(screen.queryByRole("region", { name: /Also at/ })).toBeNull();
   });

@@ -115,6 +115,9 @@ export function MeasurementExplorer({
 
   const results = useMemo(() => filterItems(items, { q, type }), [items, q, type]);
   const groups = useMemo(() => groupByStation(results), [results]);
+  const latestUnavailable = results.filter(
+    ({ latest }) => !latest || latest.status === "unavailable",
+  ).length;
   const catalogueGroups = useMemo(() => groupByStation(items), [items]);
   const locations = useMemo(
     () =>
@@ -330,7 +333,16 @@ export function MeasurementExplorer({
           ) : items.length === 0 ? (
             <EmptyState title="No measurements to show yet" />
           ) : groups.length > 0 ? (
-            <MeasurementList groups={groups} comparisonAction={addToComparison} />
+            <>
+              {latestUnavailable > 0 ? (
+                <p role="status" className="mb-3 text-sm text-ink-muted">
+                  {latestUnavailable === results.length
+                    ? "Latest readings are unavailable for these results."
+                    : "Some latest readings are unavailable."}
+                </p>
+              ) : null}
+              <MeasurementList groups={groups} comparisonAction={addToComparison} />
+            </>
           ) : (
             <EmptyState
               title="No matching measurements"
