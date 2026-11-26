@@ -5,6 +5,7 @@ export const samplePath = `/v1/river/releases/${release.token}/basins/42/samples
 export const snapped = [-1.25, 52.5];
 export const reach = [snapped, [-1.2, 52.4]];
 export const attribution = "Synthetic network attribution";
+export const catchmentId = "test-catchment";
 export const catchmentRing = [snapped, [-1, 52.5], [-1, 52], [-1.25, 52], snapped];
 export const sourceNetworkRelease =
   "ORN v2.0 GeoPackage (2025-03); network corrected from OS Open Rivers as downloaded 2023-02-09";
@@ -27,7 +28,11 @@ function feature(type: string, coordinates: unknown, kind: string) {
   return {
     type: "Feature",
     geometry: { type, coordinates },
-    properties: { kind, internal: "private-property" },
+    properties: {
+      kind,
+      id: kind === "catchment" ? catchmentId : undefined,
+      internal: "private-property",
+    },
   };
 }
 
@@ -54,7 +59,7 @@ export function routeFixture(direction = "upstream", geometry = "reaches") {
         direction === "upstream"
           ? {
               status: "published",
-              id: "private-catchment",
+              id: catchmentId,
               sampleId: "456",
               areaKm2: 12.5,
               pourPointOffsetM: 25,

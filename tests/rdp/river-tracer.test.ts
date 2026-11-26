@@ -5,6 +5,7 @@ import { RdpError, errorFromResponse } from "@/lib/rdp/errors";
 import type { RdpRequest } from "@/lib/rdp/transport";
 import {
   attribution,
+  catchmentId,
   catchmentRing,
   locateFixture,
   reach,
@@ -52,6 +53,7 @@ describe("River Tracer application endpoint", () => {
         geometry: { type: "MultiLineString", coordinates: [reach] },
         catchment: {
           status: "published",
+          id: catchmentId,
           areaKm2: 12.5,
           pourPointOffsetM: 25,
           sourceNetworkRelease,
@@ -121,7 +123,7 @@ describe("River Tracer application endpoint", () => {
     expect(response.status).toBe(200);
     expect((await response.json()).data).toMatchObject({
       geometry: { type: "MultiLineString", coordinates: [reach] },
-      catchment: { status: "published", sourceNetworkRelease: null, geometry: null },
+      catchment: { status: "published", id: null, sourceNetworkRelease: null, geometry: null },
     });
   });
 
@@ -159,6 +161,7 @@ describe("River Tracer application endpoint", () => {
       expect(response.status).toBe(200);
       expect((await response.json()).data.catchment).toEqual({
         status,
+        id: null,
         areaKm2: null,
         pourPointOffsetM: null,
         sourceNetworkRelease,
@@ -190,6 +193,18 @@ describe("River Tracer application endpoint", () => {
     expect((await response.json()).data).toMatchObject({
       geometry: { type: "MultiLineString", coordinates: [reach] },
       catchment: { status: "published", areaKm2: 12.5, pourPointOffsetM: 25, geometry: null },
+    });
+  });
+
+  it("withholds a polygon whose feature ID differs from the catchment metadata", async () => {
+    const route = routeFixture();
+    route.features[1].properties.id = "another-catchment";
+    fixtureTransport(locateFixture(), route);
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toMatchObject({
+      geometry: { type: "MultiLineString", coordinates: [reach] },
+      catchment: { status: "published", id: null, geometry: null },
     });
   });
 

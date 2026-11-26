@@ -15,6 +15,7 @@ type CatchmentGeometry =
   | { type: "MultiPolygon"; coordinates: PolygonCoordinates[] };
 type RiverCatchment = {
   status: "published" | "unavailable" | "not-loaded";
+  id: string | null;
   areaKm2: number | null;
   pourPointOffsetM: number | null;
   sourceNetworkRelease: string | null;
@@ -151,10 +152,10 @@ function parseCatchmentGeometry(value: unknown): CatchmentGeometry | null {
 function parseCatchment(
   metadata: unknown,
   network: unknown,
-  features: unknown[],
+  features: { id: unknown; geometry: unknown }[],
 ): RiverCatchment | null {
   if (!metadata || typeof metadata !== "object") return null;
-  const { status, areaKm2, pourPointOffsetM } = metadata as Record<string, unknown>;
+  const { status, id, areaKm2, pourPointOffsetM } = metadata as Record<string, unknown>;
   if (status !== "published" && status !== "unavailable" && status !== "not-loaded") return null;
 
   const source = network as Record<string, unknown> | null | undefined;
@@ -173,15 +174,28 @@ function parseCatchment(
     pourPointOffsetM >= 0
       ? pourPointOffsetM
       : null;
+  const catchmentId =
+    status === "published" &&
+    typeof id === "string" &&
+    id.trim() === id &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)
+      ? id
+      : null;
+  const geometry =
+    catchmentId !== null &&
+    area !== null &&
+    offset !== null &&
+    features.length === 1 &&
+    features[0].id === catchmentId
+      ? parseCatchmentGeometry(features[0].geometry)
+      : null;
   return {
     status,
+    id: geometry ? catchmentId : null,
     areaKm2: area,
     pourPointOffsetM: offset,
     sourceNetworkRelease,
-    geometry:
-      area !== null && offset !== null && features.length === 1
-        ? parseCatchmentGeometry(features[0])
-        : null,
+    geometry,
   };
 }
 
@@ -218,13 +232,13 @@ export function parseRiverRoute(
 
   let snapped: Position | undefined;
   const reaches: Position[][] = [];
-  const catchmentFeatures: unknown[] = [];
+  const catchmentFeatures: { id: unknown; geometry: unknown }[] = [];
   for (const value of collection.features) {
     const feature = object(value);
-    const { kind } = object(feature.properties);
+    const { kind, id } = object(feature.properties);
     if (feature.type !== "Feature") invalid();
     if (direction === "upstream" && kind === "catchment") {
-      catchmentFeatures.push(feature.geometry);
+      catchmentFeatures.push({ id, geometry: feature.geometry });
       continue;
     }
     const { type, coordinates } = object(feature.geometry);

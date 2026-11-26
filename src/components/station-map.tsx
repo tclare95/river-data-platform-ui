@@ -145,12 +145,14 @@ export function StationMap({
       if (response.status === 410) return update({ status: "release-changed" });
       if (!response.ok) return update({ status: "unavailable" });
       const { data } = (await response.json()) as { data: PublicUpstreamMeasurements };
-      update(
-        data.release.version === upstreamResult.release.version &&
-          data.release.releaseId === upstreamResult.release.releaseId
-          ? { status: "result", data }
-          : { status: "release-changed" },
-      );
+      if (
+        data.release.version !== upstreamResult.release.version ||
+        data.release.releaseId !== upstreamResult.release.releaseId
+      )
+        return update({ status: "release-changed" });
+      if (data.status === "available" && data.catchment.id !== upstreamResult.catchment?.id)
+        return update({ status: "catchment-changed" });
+      update({ status: "result", data });
     } catch {
       update({ status: "unavailable" });
     }

@@ -210,7 +210,10 @@ export function toPublicUpstreamMeasurements(
       ? [{ geographicRelationship: station.geographicRelationship, measurements }]
       : [];
   });
-  return { ...metadata, data };
+  const omittedMeasurements =
+    stations.reduce((total, station) => total + station.measurements.length, 0) -
+    data.reduce((total, station) => total + station.measurements.length, 0);
+  return { ...metadata, data, omittedMeasurements };
 }
 
 export type PublicUpstreamMeasurements = ReturnType<typeof toPublicUpstreamMeasurements>;

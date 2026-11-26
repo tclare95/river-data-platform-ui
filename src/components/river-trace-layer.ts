@@ -19,6 +19,7 @@ export type TraceResult = {
   geometry: LineString | MultiLineString | null;
   catchment?: {
     status: "published" | "unavailable" | "not-loaded";
+    id: string | null;
     areaKm2: number | null;
     pourPointOffsetM: number | null;
     sourceNetworkRelease: string | null;
@@ -41,9 +42,9 @@ export function traceCatchment(result?: TraceResult) {
     return null;
 
   // The application endpoint validates the rings, source approval and response size.
-  const { geometry, areaKm2, pourPointOffsetM, sourceNetworkRelease } = catchment;
-  return geometry && areaKm2 !== null && pourPointOffsetM !== null && sourceNetworkRelease
-    ? { geometry, areaKm2, pourPointOffsetM, sourceNetworkRelease }
+  const { id, geometry, areaKm2, pourPointOffsetM, sourceNetworkRelease } = catchment;
+  return id && geometry && areaKm2 !== null && pourPointOffsetM !== null && sourceNetworkRelease
+    ? { id, geometry, areaKm2, pourPointOffsetM, sourceNetworkRelease }
     : null;
 }
 
