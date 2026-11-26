@@ -108,6 +108,7 @@ export function explorerSharePath(state: ExplorerState) {
 
 export function writeExplorerParams(values: Record<string, string | undefined>, push = false) {
   const url = new URL(window.location.href);
+  if (url.pathname !== "/") return;
   for (const [name, value] of Object.entries(values)) {
     if (value === undefined) url.searchParams.delete(name);
     else url.searchParams.set(name, value);

@@ -109,6 +109,7 @@ export function MeasurementExplorer({
 
   useEffect(() => {
     const restore = () => {
+      if (location.pathname !== "/") return;
       const next = restoreSelection(readExplorerState(new URLSearchParams(location.search)), items);
       const mapKey = JSON.stringify(explorerMapParams(next.map));
       if (mapKey !== currentMap.current) {

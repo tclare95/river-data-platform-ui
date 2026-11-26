@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { explorerSharePath, readExplorerState } from "@/lib/explorer-state";
+import { explorerSharePath, readExplorerState, writeExplorerParams } from "@/lib/explorer-state";
 
 describe("Explorer links", () => {
   it("round-trips public map and comparison state through the server and browser parsers", () => {
@@ -32,6 +32,18 @@ describe("Explorer links", () => {
       ...state,
       query: { q: "", type: "level" },
     });
+  });
+
+  it("leaves the destination URL alone if Explorer is still mounted during navigation", () => {
+    history.replaceState(null, "", "/about?range=original#main");
+    try {
+      writeExplorerParams({ range: "30d" }, true);
+      expect(location.pathname + location.search + location.hash).toBe(
+        "/about?range=original#main",
+      );
+    } finally {
+      history.replaceState(null, "", "/");
+    }
   });
 
   it("bounds all fields and keeps offsets attached to their measurements when a slot is dropped", () => {
