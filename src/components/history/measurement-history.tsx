@@ -35,7 +35,7 @@ function HistoryBody({
           </a>
         }
       >
-        Part of this period couldn’t be loaded, so no readings are shown.
+        Readings and coverage for this period could not be loaded.
       </ErrorState>
     );
   }

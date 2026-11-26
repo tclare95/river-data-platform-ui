@@ -2,8 +2,8 @@ import Link from "next/link";
 import { useId, type ReactNode } from "react";
 import { Button } from "@/components/button";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
-import { formatPeriod } from "@/lib/format";
-import { measurementPath, parameterLabel } from "@/lib/labels";
+import { StationMetadata } from "@/components/station-metadata";
+import { measurementPath, measurementSummary, parameterLabel } from "@/lib/labels";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 import type { PublicUpstreamMeasurements } from "@/lib/rdp/upstream-measurements";
 
@@ -115,12 +115,7 @@ export function CatchmentMeasurements({
                 return (
                   <li key={station.stationId} className="py-2">
                     <h3 className="text-sm font-semibold">{station.name}</h3>
-                    <p className="text-sm text-ink-muted">
-                      {station.source.label}
-                      {station.position
-                        ? ` · Position resolution ${station.position.precisionMetres} m`
-                        : " · No verified map position"}
-                    </p>
+                    <StationMetadata measurement={station} />
                     <ul>
                       {measurements.map((measurement) => (
                         <li
@@ -132,12 +127,9 @@ export function CatchmentMeasurements({
                             href={measurementPath(measurement.measurementId)}
                             prefetch={false}
                           >
-                            {parameterLabel(measurement.parameter)} ({measurement.unit}
-                            {measurement.periodSeconds
-                              ? ` per ${formatPeriod(measurement.periodSeconds)}`
-                              : ""}
-                            )
+                            {parameterLabel(measurement.parameter)}
                           </Link>
+                          <span className="text-ink-muted">{measurementSummary(measurement)}</span>
                           {measurement.networkRelationship === "not_assessed" ? (
                             <span className="text-ink-muted">Upstream connection unverified</span>
                           ) : null}

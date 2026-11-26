@@ -32,6 +32,8 @@ export type PublicMeasurement = {
   stationId: string;
   name: string;
   watercourseName?: string;
+  watercourseStatus?: NonNullable<Measurement["watercourse"]>["status"];
+  locationStatus?: NonNullable<Measurement["location"]>["status"];
   position?: Pick<
     Extract<Measurement["location"], { status: "verified" }>,
     "latitude" | "longitude" | "precisionMetres"
@@ -60,6 +62,8 @@ export function toPublicMeasurement(measure: Measurement): PublicMeasurement {
     name: measure.name,
     watercourseName:
       measure.watercourse?.status === "verified" ? measure.watercourse.name : undefined,
+    watercourseStatus: measure.watercourse?.status,
+    locationStatus: measure.location?.status,
     position: location && {
       latitude: location.latitude,
       longitude: location.longitude,

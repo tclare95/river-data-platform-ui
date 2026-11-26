@@ -317,6 +317,9 @@ describe("measurement explorer", () => {
     const details = within(document.getElementById(shardlow.getAttribute("aria-controls")!)!);
     expect(details.getByRole("heading", { name: "Shardlow" })).toHaveFocus();
     expect(details.getByText("River Trent")).toBeInTheDocument();
+    expect(details.getByText("Environment Agency")).toBeVisible();
+    expect(details.getByText("mASD · Local gauge datum (ASD)")).toBeVisible();
+    expect(details.getByText("Not recent")).toBeVisible();
     expect(details.getByText(/10 m resolution/)).toBeInTheDocument();
     expect(details.getByRole("link", { name: "Water level" })).toHaveAttribute(
       "href",

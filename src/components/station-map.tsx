@@ -13,9 +13,11 @@ import {
   type TracePoint,
   type TraceResult,
 } from "./river-trace-layer";
+import { LatestLine } from "@/components/latest-reading";
+import { StationMetadata } from "@/components/station-metadata";
 import { ErrorState } from "@/components/states";
 import type { StationGroup } from "@/lib/discovery";
-import { measurementPath, parameterLabel } from "@/lib/labels";
+import { measurementPath, measurementSummary, parameterLabel } from "@/lib/labels";
 import {
   GB_BOUNDS,
   LOCATION_ZOOM,
@@ -245,6 +247,7 @@ export function StationMap({
     return [...markers.values()];
   }, [stations, matchedStations]);
   const selected = mappedStations.find((station) => station.stationId === selectedId);
+  const selectedCatalogueItems = stations.find(({ stationId }) => stationId === selectedId)?.items;
 
   // Catchment-only stations may go away when a new point or release is selected.
   if (selectedId && !selected) select(undefined);
@@ -669,30 +672,40 @@ export function StationMap({
             >
               {selected.name}
             </h2>
-            {selected.watercourseName ? (
-              <p className="text-sm text-ink-muted">{selected.watercourseName}</p>
-            ) : null}
+            <StationMetadata measurement={selected.measurements[0]} />
             <ul className="space-y-1">
-              {selected.measurements.map((measurement) => (
-                <li key={measurement.measurementId} className="flex flex-wrap items-center gap-x-3">
-                  <Link className="link" href={measurementPath(measurement.measurementId)}>
-                    {parameterLabel(measurement.parameter)}
-                  </Link>
-                  {comparisonAction(measurement)}
-                </li>
-              ))}
+              {selected.measurements.map((measurement) => {
+                const item = selectedCatalogueItems?.find(
+                  ({ measurement: row }) => row.measurementId === measurement.measurementId,
+                );
+                return (
+                  <li
+                    key={measurement.measurementId}
+                    className="flex flex-wrap items-center gap-x-3"
+                  >
+                    <div className="grow">
+                      <Link className="link" href={measurementPath(measurement.measurementId)}>
+                        {parameterLabel(measurement.parameter)}
+                      </Link>
+                      <p className="text-sm text-ink-muted">{measurementSummary(measurement)}</p>
+                      {item ? (
+                        <p className="text-sm">
+                          <LatestLine measurement={measurement} latest={item.latest} />
+                        </p>
+                      ) : null}
+                    </div>
+                    {comparisonAction(measurement)}
+                  </li>
+                );
+              })}
             </ul>
-            <p className="text-sm text-ink-muted">
-              Station reference position · {selected.position.precisionMetres} m resolution
-              {selected.locationEvidence ? (
-                <>
-                  {" · "}
-                  <a className="link" href={selected.locationEvidence}>
-                    {selected.source.label} station record
-                  </a>
-                </>
-              ) : null}
-            </p>
+            {selected.locationEvidence ? (
+              <p className="text-sm">
+                <a className="link" href={selected.locationEvidence}>
+                  {selected.source.label} station record
+                </a>
+              </p>
+            ) : null}
             {tracing ? (
               <Button
                 onClick={() =>

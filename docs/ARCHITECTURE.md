@@ -194,4 +194,6 @@ Status (20 November 2026): steps 1–3 are done for both stages, and signed read
 
 ## Backend dependency
 
-Catalogue geography follows [RDP #129's consumer handoff](https://github.com/tclare95/river-data-platform/blob/3c49572/docs/CATALOGUE-GEOGRAPHY.md) (observation read API OpenAPI 1.1.0). The adapter accepts older responses and omits malformed or unrecognised geography. The public projection includes verified river names, verified coordinates with their provider resolution, and allowlisted EA station evidence links. Retrieval time stays in the adapter.
+The [published read contract after RDP #153](https://github.com/tclare95/river-data-platform/blob/a419903/docs/READ-API.md#station-display-names) supplies the station display name and geography for each measurement. The adapter accepts older responses and omits malformed or unrecognised geography. The public projection includes verified watercourse names, location status, verified positions with their provider resolution, and allowlisted EA station evidence links. Only verified positions are mapped.
+
+Latest availability and freshness come from the published latest read. A missing latest observation does not establish collection or backfill state. Historical coverage is reported independently for the requested window, including when it contains no readings. The Explorer keeps catalogue metadata and successful latest results visible when individual reads fail.

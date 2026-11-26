@@ -92,15 +92,21 @@ describe("catalogue geography", () => {
 
   it("projects the verified river, position, precision and public evidence link", async () => {
     const parsed = await parseGeography({
+      name: "Colwick Weir",
       watercourse,
       location: { ...verified, easting: 462050, providerRecord: "internal" },
+      collectionSelected: true,
+      catalogueRevision: 4,
     });
     expect(parsed.watercourse).toEqual(watercourse);
     expect(parsed.location).toEqual(verified);
     const { sourceId, provider } = parsed;
     const projected = toPublicMeasurement(parsed);
     expect(projected).toMatchObject({
+      name: "Colwick Weir",
       watercourseName: "River Trent",
+      watercourseStatus: "verified",
+      locationStatus: "verified",
       locationEvidence: verified.evidence,
     });
     expect(projected.position).toEqual({
@@ -111,6 +117,10 @@ describe("catalogue geography", () => {
     expect(projected).not.toHaveProperty("sourceId", sourceId);
     expect(projected).not.toHaveProperty("provider", provider);
     expect(projected).not.toHaveProperty("location");
+    for (const entry of [parsed, projected]) {
+      expect(entry).not.toHaveProperty("collectionSelected");
+      expect(entry).not.toHaveProperty("catalogueRevision");
+    }
   });
 
   it.each([
@@ -124,15 +134,21 @@ describe("catalogue geography", () => {
   ])("preserves a $status location without positioning it", async (location) => {
     const parsed = await parseGeography({ watercourse, location });
     expect(parsed.location).toEqual(location);
-    expect(toPublicMeasurement(parsed).watercourseName).toBe("River Trent");
-    expect(toPublicMeasurement(parsed).position).toBeUndefined();
+    expect(toPublicMeasurement(parsed)).toMatchObject({
+      watercourseName: "River Trent",
+      locationStatus: location.status,
+      position: undefined,
+    });
   });
 
   it.each(["not_applicable", "not_published"])("keeps a %s watercourse unnamed", async (status) => {
     const entry = { status, name: null };
     const parsed = await parseGeography({ watercourse: entry });
     expect(parsed.watercourse).toEqual(entry);
-    expect(toPublicMeasurement(parsed).watercourseName).toBeUndefined();
+    expect(toPublicMeasurement(parsed)).toMatchObject({
+      watercourseName: undefined,
+      watercourseStatus: status,
+    });
   });
 
   it("accepts an older catalogue entry without geography", async () => {

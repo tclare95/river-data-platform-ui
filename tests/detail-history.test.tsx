@@ -100,6 +100,7 @@ describe("measurement history on the detail page", () => {
       }),
     );
     const history = await renderDetail("ea-shardlow-level", "30d");
+    expect(screen.getByRole("region", { name: "Latest reading" })).toHaveTextContent("Observed at");
     const alert = await within(history).findByRole("alert");
     expect(alert).toHaveTextContent("History unavailable right now");
     expect(within(history).queryByRole("img")).toBeNull();
@@ -163,6 +164,7 @@ describe("measurement history on the detail page", () => {
     const history = await renderDetail("ea-shardlow-level");
     await within(history).findByRole("img");
     expect(history).toHaveTextContent("Part of this period has no data.");
+    expect(screen.getByRole("region", { name: "Latest reading" })).toHaveTextContent("Recent");
     expect(within(history).getByText(/^Source outage:/)).toBeVisible();
   });
 
