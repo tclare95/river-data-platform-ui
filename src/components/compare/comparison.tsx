@@ -2,7 +2,7 @@ import { Suspense, use } from "react";
 import { ComparisonBody } from "@/components/compare/comparison-body";
 import { RangeNav } from "@/components/history/history-controls";
 import { LoadingState } from "@/components/states";
-import { compareHref, type ComparisonSide } from "@/lib/compare";
+import { compareHref, type ComparisonHistory } from "@/lib/compare";
 import { loadComparison } from "@/lib/compare-load";
 import { HISTORY_RANGES, type HistoryRange } from "@/lib/history/range";
 import type { PublicMeasurement } from "@/lib/rdp/public";
@@ -14,9 +14,10 @@ function LoadedComparison({
   results,
 }: {
   range: HistoryRange;
-  results: Promise<ComparisonSide[]>;
+  results: Promise<ComparisonHistory>;
 }) {
-  return <ComparisonBody range={range} sides={use(results)} statusId={STATUS_ID} />;
+  const { data, window } = use(results);
+  return <ComparisonBody range={range} sides={data} window={window} statusId={STATUS_ID} />;
 }
 
 export function Comparison({

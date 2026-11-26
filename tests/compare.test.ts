@@ -3,10 +3,12 @@ import {
   alignReadings,
   compareHref,
   comparisonAxes,
+  comparisonInspectionRows,
   readCompareQuery,
   sharesScale,
 } from "@/lib/compare";
 import type { PublicMeasurement } from "@/lib/rdp/public";
+import type { RainfallInterval } from "@/lib/history/rainfall";
 
 function measure(overrides: Partial<PublicMeasurement>): PublicMeasurement {
   return {
@@ -113,6 +115,43 @@ describe("aligned readings", () => {
     expect(alignReadings([[a], [], [b, later], [later]])).toEqual([
       { time: later.observedAt, readings: [null, null, later, later] },
       { time: a.observedAt, readings: [a, null, b, null] },
+    ]);
+  });
+
+  it("aligns opposing offsets at an exact display time and leaves other readings missing", () => {
+    const a = Object.freeze(observation("2026-11-19T10:15:00.0000001Z", 2));
+    const b = Object.freeze(observation("2026-11-19T11:45:00.0000001Z", 20));
+    const later = observation("2026-11-19T11:15:00.0000002Z", 3);
+    const rows = alignReadings([[a], [b], [later]], [60, -30, 0]);
+    expect(rows).toEqual([
+      { time: later.observedAt, readings: [null, null, later] },
+      { time: "2026-11-19T11:15:00.0000001Z", readings: [a, b, null] },
+    ]);
+    expect(rows[1].readings[0]).toBe(a);
+    expect(rows[1].readings[1]).toBe(b);
+  });
+
+  it("inspects a shifted rainfall interval at its displayed midpoint and leaves the next gap empty", () => {
+    const interval = Object.freeze({
+      label: "2026-11-19T10:15:00Z",
+      periodStart: "2026-11-19T10:00:00Z",
+      periodEnd: "2026-11-19T10:15:00Z",
+      labelConvention: "period_end",
+      totalMm: 1.25,
+    } satisfies Partial<RainfallInterval>) as RainfallInterval;
+    const missing = observation("2026-11-19T10:30:00Z", 3);
+    const offsets = [-15, 0];
+    const rows = alignReadings([[interval], [missing]], offsets);
+    const window = { from: "2026-11-19T09:00:00Z", to: "2026-11-19T11:00:00Z" };
+    expect(
+      comparisonInspectionRows(rows, offsets, window).map(({ time, readings }) => ({
+        time,
+        readings,
+      })),
+    ).toEqual([
+      { time: "2026-11-19T09:52:30.000Z", readings: [interval, null] },
+      { time: "2026-11-19T10:00:00Z", readings: [interval, null] },
+      { time: missing.observedAt, readings: [null, missing] },
     ]);
   });
 });

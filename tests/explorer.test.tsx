@@ -206,6 +206,10 @@ describe("measurement explorer", () => {
   ) {
     const { searchParams } = new URL(String(url), window.location.origin);
     return Response.json({
+      window:
+        rainfall.status === "ok"
+          ? { from: rainfall.from, to: rainfall.to }
+          : { from: "2026-11-12T12:00:00Z", to: "2026-11-19T12:00:00Z" },
       data: ["a", "b", "c", "d"].flatMap((slot) => {
         const measurement = items.find(
           ({ measurement }) => measurement.measurementId === searchParams.get(slot),
@@ -928,6 +932,16 @@ describe("measurement explorer", () => {
     expect(chart.getByRole("group", { name: /^Shared timeline/ })).toHaveAccessibleName(
       /mm · Hourly totals/,
     );
+    await user.click(chart.getByText("Time shifts"));
+    const shifts = chart.getByRole("group", { name: "Stone rainfall" });
+    const offset = within(shifts).getByRole("spinbutton", { name: "Offset (minutes)" });
+    await user.clear(offset);
+    await user.type(offset, "30");
+    await user.click(within(shifts).getByRole("button", { name: "Apply" }));
+    expect(chart.getByRole("group", { name: /^Shared timeline/ })).toHaveAccessibleName(
+      /Stone rainfall \(\+30 min\).*Hourly totals/,
+    );
+    expect(fetchHistory).toHaveBeenCalledTimes(2);
     await act(async () => finishOldHistory(new Response(null, { status: 503 })));
     expect(chart.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "River map" })).toBe(map);

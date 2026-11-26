@@ -12,7 +12,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ComparisonValue } from "@/components/compare/comparison-table";
+import {
+  ComparisonTime,
+  ComparisonValue,
+  InspectionTime,
+} from "@/components/compare/comparison-table";
 import { IsolatedDot, timeTicks, valueAxis } from "@/components/history/history-chart";
 import { RainfallTotalsPlot } from "@/components/history/rainfall-totals";
 import { RainfallBars } from "@/components/history/rainfall-history";
@@ -24,9 +28,10 @@ import {
   type ComparisonSide,
   type ComparisonReading,
 } from "@/lib/compare";
+import { comparisonOffsetLabel, comparisonOffsetMs } from "@/lib/compare-time";
 import { formatPeriod } from "@/lib/format";
-import { rainfallBounds } from "@/lib/history/rainfall";
 import { RAINFALL_MODES, type RainfallMode } from "@/lib/history/rainfall-totals";
+import type { HistoryWindow } from "@/lib/history/range";
 import { buildSeries } from "@/lib/history/series";
 import { datumSummary, measurementPath, parameterLabel } from "@/lib/labels";
 import { epochMs, tickKey } from "@/lib/rdp/contract";
@@ -38,29 +43,29 @@ const STYLES = [
   { color: "var(--color-compare-quaternary)", dash: "8 3 2 3", angle: 90 },
 ];
 const axisNumber = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3 });
-const inspectionTime = new Intl.DateTimeFormat("en-GB", {
-  timeZone: "Europe/London",
-  day: "numeric",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  timeZoneName: "short",
-});
 
 export function ComparisonChart({
   sides,
   rows,
   readings,
   mode,
+  offsets,
+  window,
 }: {
   sides: ComparisonSide[];
   rows: AlignedRow[];
   readings: readonly (readonly ComparisonReading[])[];
   mode: RainfallMode;
+  offsets: readonly number[];
+  window: HistoryWindow;
 }) {
   const patternId = useId();
-  const data = useMemo(() => comparisonInspectionRows(rows), [rows]);
+  const data = useMemo(
+    () => comparisonInspectionRows(rows, offsets, window),
+    [rows, offsets, window],
+  );
+  const start = epochMs(window.from);
+  const end = epochMs(window.to);
   const series = sides.flatMap(({ measurement, result }, index) => {
     if (result.status !== "ok") return [];
     const rainfall = "intervals" in result;
@@ -68,6 +73,8 @@ export function ComparisonChart({
     const totals = readings[index].filter((row) => "expected" in row);
     const observations = "observations" in result ? result.observations : null;
     if (!readings[index].length) return [];
+    const offset = offsets[index];
+    const delta = comparisonOffsetMs(offset);
     const gaps = result.coverage.gaps.filter((gap) => gap.reason !== "unknown");
     const line =
       observations && buildSeries(observations, measurement.expectedIntervalSeconds, gaps);
@@ -75,7 +82,8 @@ export function ComparisonChart({
       (max, row) => Math.max(max, "totalMm" in row ? (row.totalMm ?? 0) : 0),
       0,
     );
-    const label = `${measurement.name} ${parameterLabel(measurement.parameter).toLowerCase()}`;
+    const name = `${measurement.name} ${parameterLabel(measurement.parameter).toLowerCase()}`;
+    const label = offset === 0 ? name : `${name} (${comparisonOffsetLabel(offset)})`;
     const unit =
       "periodSeconds" in result
         ? mode === "native"
@@ -87,7 +95,8 @@ export function ComparisonChart({
       {
         index,
         measurement,
-        result,
+        offset,
+        delta,
         gaps,
         rainfall,
         intervals,
@@ -103,17 +112,6 @@ export function ComparisonChart({
   });
   const axes = comparisonAxes(series, (item) => item.measurement);
   const dual = axes.length === 2;
-  let start = epochMs(series[0].result.from);
-  let end = epochMs(series[0].result.to);
-  for (const { intervals } of series) {
-    for (const row of intervals) {
-      const period = rainfallBounds(row);
-      if (period) {
-        start = Math.min(start, epochMs(period[0]));
-        end = Math.max(end, epochMs(period[1]));
-      }
-    }
-  }
   const x = timeTicks(start, end);
   const axisSide = (axis: number) => (dual ? (axis === 0 ? "Left axis" : "Right axis") : "Y axis");
   const rainfallBars = mode === "native" || mode === "hourly" || mode === "daily";
@@ -260,13 +258,13 @@ export function ComparisonChart({
                 />
               );
             })}
-            {series.flatMap(({ index, color, gaps }) =>
+            {series.flatMap(({ index, color, gaps, delta }) =>
               gaps.map((gap) => (
                 <ReferenceArea
                   key={`${index}-${gap.from}`}
                   yAxisId={0}
-                  x1={Math.max(start, epochMs(gap.from))}
-                  x2={Math.min(end, epochMs(gap.to))}
+                  x1={Math.max(start, epochMs(gap.from) + delta)}
+                  x2={Math.min(end, epochMs(gap.to) + delta)}
                   fill={color}
                   fillOpacity={0.08}
                   stroke={color}
@@ -276,7 +274,7 @@ export function ComparisonChart({
                 />
               )),
             )}
-            {legend.map(({ index, color, dash, intervals, totals, axisId, pattern }) =>
+            {legend.map(({ index, color, dash, intervals, totals, axisId, pattern, offset }) =>
               intervals.length ? (
                 <RainfallBars
                   key={index}
@@ -286,6 +284,8 @@ export function ComparisonChart({
                   fill={pattern ? `url(#${pattern})` : color}
                   dash={dash}
                   opacity={0.55}
+                  offset={offset}
+                  window={window}
                 />
               ) : totals.length ? (
                 <RainfallTotalsPlot
@@ -296,14 +296,19 @@ export function ComparisonChart({
                   color={color}
                   dash={dash}
                   fill={pattern ? `url(#${pattern})` : color}
+                  offset={offset}
                 />
               ) : null,
             )}
-            {legend.map(({ index, color, dash, line, axisId }) =>
+            {legend.map(({ index, color, dash, line, axisId, delta }) =>
               line ? (
                 <Line
                   key={index}
-                  data={line.points}
+                  data={
+                    delta === 0
+                      ? line.points
+                      : line.points.map((point) => ({ ...point, t: point.t + delta }))
+                  }
                   dataKey="value"
                   yAxisId={axisId}
                   type="linear"
@@ -338,9 +343,10 @@ export function ComparisonChart({
                     className="max-w-56 rounded border border-line bg-surface px-3 py-2 text-xs text-ink shadow-sm"
                   >
                     <p className="text-ink-muted">
-                      <time dateTime={row.time}>{inspectionTime.format(row.t)}</time>
+                      {offsets.some((offset) => offset !== 0) ? "Displayed time " : ""}
+                      <InspectionTime value={row.time} />
                     </p>
-                    {legend.map(({ index, label, measurement, color }) => {
+                    {legend.map(({ index, label, measurement, color, offset }) => {
                       const reading = row.readings[index];
                       if (!reading) return null;
                       return (
@@ -349,7 +355,9 @@ export function ComparisonChart({
                             {label}
                           </p>
                           <ComparisonValue reading={reading} unit={measurement.unit} />
-                          {"label" in reading && tickKey(reading.label) !== tickKey(row.time) ? (
+                          {offset !== 0 ? (
+                            <ComparisonTime reading={reading} offset={offset} />
+                          ) : "label" in reading && tickKey(reading.label) !== tickKey(row.time) ? (
                             <p className="text-ink-muted">
                               Provider label <Time value={reading.label} />
                             </p>

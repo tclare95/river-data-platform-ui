@@ -4,14 +4,14 @@ import { lazy, Suspense, useEffect, useId, useState } from "react";
 import { Button } from "@/components/button";
 import { RangeNav } from "@/components/history/history-controls";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
-import { compareParams, type ComparisonSide } from "@/lib/compare";
+import { compareParams, type ComparisonHistory } from "@/lib/compare";
 import { HISTORY_RANGES, type HistoryRange } from "@/lib/history/range";
 
 const ComparisonBody = lazy(async () => ({
   default: (await import("./comparison-body")).ComparisonBody,
 }));
 
-type Result = ComparisonSide[] | "unavailable" | "too_large";
+type Result = ComparisonHistory | "unavailable" | "too_large";
 
 function InlineHistory({
   query,
@@ -34,11 +34,17 @@ function InlineHistory({
           signal: controller.signal,
         });
         const result = response.ok
-          ? ((await response.json()) as { data: ComparisonSide[] }).data
+          ? ((await response.json()) as ComparisonHistory)
           : response.status === 413
             ? "too_large"
             : "unavailable";
-        if (!controller.signal.aborted) setResult(result ?? "unavailable");
+        if (!controller.signal.aborted) {
+          setResult(
+            !result || (typeof result === "object" && (!result.data || !result.window))
+              ? "unavailable"
+              : result,
+          );
+        }
       } catch {
         if (!controller.signal.aborted) setResult("unavailable");
       }
@@ -80,7 +86,12 @@ function InlineHistory({
   if (!result) return loading;
   return (
     <Suspense fallback={loading}>
-      <ComparisonBody sides={result} range={range} statusId={statusId} />
+      <ComparisonBody
+        sides={result.data}
+        window={result.window}
+        range={range}
+        statusId={statusId}
+      />
     </Suspense>
   );
 }

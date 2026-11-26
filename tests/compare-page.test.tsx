@@ -160,8 +160,8 @@ describe("compare page", () => {
     for (const { path, query } of reads) {
       const rain = path.includes("rainfall");
       expect(query).toMatchObject({
-        from: rain ? "2026-11-05T12:00:00.000Z" : "2026-11-12T12:00:00.000Z",
-        to: rain ? "2026-11-19T12:00:00.001Z" : "2026-11-19T12:00:00.000Z",
+        from: rain ? "2026-11-04T12:00:00.000Z" : "2026-11-11T12:00:00.000Z",
+        to: rain ? "2026-11-19T12:07:00.001Z" : "2026-11-19T12:07:00.000Z",
         limit: "2000",
       });
     }
@@ -206,6 +206,44 @@ describe("compare page", () => {
       "Showing 7 days for 2 measurements",
     );
     expect(screen.getByText(/Environment Agency data/)).toBeVisible();
+  });
+
+  it("applies and resets a manual shift and identifies both times in the shared tooltip", async () => {
+    const time = "2026-11-18T12:00:00.0000000Z";
+    useClient(
+      withHistory((body) => ({
+        ...body,
+        data: body.data.filter((row) => row.observedAt === time),
+      })),
+    );
+    await renderCompare({ a: "ea-shardlow-level", b: "ea-shardlow-flow" });
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Time shifts"));
+    const controls = screen.getByRole("group", { name: "Shardlow water level" });
+    const offset = within(controls).getByRole("spinbutton", { name: "Offset (minutes)" });
+    await user.clear(offset);
+    await user.type(offset, "-60");
+    await user.click(within(controls).getByRole("button", { name: "Apply" }));
+    const chart = screen.getByRole("group", { name: /^Shared timeline/ });
+    expect(chart).toHaveAccessibleName(/Shardlow water level \(−1 h\)/);
+    const inspector = within(chart).getByRole("application", { name: "Inspect compared readings" });
+    await act(async () => inspector.focus());
+    const tooltip = await within(chart).findByRole("status");
+    expect(tooltip).toHaveTextContent("Displayed time 18 Nov, 11:00:00");
+    expect(tooltip).toHaveTextContent("Original observation time 18 Nov, 12:00");
+    expect(tooltip).toHaveTextContent("Displayed observation time 18 Nov, 11:00");
+    expect(tooltip).not.toHaveTextContent("Shardlow flow");
+    fireEvent.keyDown(inspector, { key: "ArrowRight" });
+    expect(await within(tooltip).findByText("Shardlow flow")).toBeVisible();
+
+    await user.click(within(controls).getByRole("button", { name: "Reset" }));
+    expect(offset).toHaveValue(0);
+    const resetTimeline = screen.getByRole("group", { name: /^Shared timeline/ });
+    expect(resetTimeline).not.toHaveAccessibleName(/−1 h/);
+    const resetChart = within(resetTimeline);
+    await act(async () => resetChart.getByRole("application").focus());
+    expect(await resetChart.findByRole("status")).toHaveTextContent("Shardlow water level");
+    expect(resetChart.getByRole("status")).toHaveTextContent("Shardlow flow");
   });
 
   it("labels independent local datum scales for levels from different stations", async () => {

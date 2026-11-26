@@ -43,13 +43,14 @@ export async function GET(request: Request) {
   if (selected.length !== ids.length) return failure(404, "NOT_FOUND");
   if (needsMoreCompareAxes(selected)) return failure(400, "INCOMPATIBLE");
 
-  const sides = await loadComparison(selected, range);
+  const { data: sides, window } = await loadComparison(selected, range);
+  const envelope = `{"window":${JSON.stringify(window)},"data":[`;
   const encoded = sides.map((side, index) => {
     const json = JSON.stringify(side);
     return { index, json, bytes: Buffer.byteLength(json) };
   });
   // Include the envelope and separators in the budget. Keep complete smaller series if the response would overflow.
-  let bytes = Buffer.byteLength('{"data":[]}') + encoded.length - 1;
+  let bytes = Buffer.byteLength(envelope) + 2 + encoded.length - 1;
   for (const side of encoded) bytes += side.bytes;
   if (bytes > MAX_RESPONSE_BYTES) {
     for (const entry of [...encoded].sort((a, b) => b.bytes - a.bytes)) {
@@ -62,6 +63,6 @@ export async function GET(request: Request) {
     }
   }
   if (bytes > MAX_RESPONSE_BYTES) return failure(413, "RESULT_TOO_LARGE");
-  const body = `{"data":[${encoded.map(({ json }) => json).join(",")}]}`;
+  const body = `${envelope}${encoded.map(({ json }) => json).join(",")}]}`;
   return new Response(body, { headers: { ...headers, "Content-Type": "application/json" } });
 }

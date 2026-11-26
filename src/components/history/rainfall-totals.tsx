@@ -1,6 +1,7 @@
 "use client";
 
 import { useXAxisScale, useYAxisScale } from "recharts";
+import { comparisonOffsetMs } from "@/lib/compare-time";
 import {
   RAINFALL_MODES,
   rainfallDepth,
@@ -75,7 +76,7 @@ export function RainfallTotalsNote({
   return (
     <p className="text-sm text-ink-muted">
       {mode === "daily"
-        ? "Days start at midnight UTC. The chart range can cut the first or last day short. "
+        ? "Daily totals use midnight UTC in source time. The chart range can cut the first or last day short. "
         : ""}
       {indicative
         ? "Indicative totals group provider labels where interval timing is unverified. "
@@ -93,6 +94,7 @@ export function RainfallTotalsPlot({
   color = "var(--color-accent)",
   dash,
   fill = color,
+  offset = 0,
 }: {
   totals: readonly RainfallTotal[];
   mode: RainfallMode;
@@ -100,6 +102,7 @@ export function RainfallTotalsPlot({
   color?: string;
   dash?: string;
   fill?: string;
+  offset?: number;
 }) {
   const x = useXAxisScale();
   const y = useYAxisScale(yAxisId);
@@ -107,9 +110,10 @@ export function RainfallTotalsPlot({
   if (!x || !y || baseline === undefined) return null;
 
   const bars = mode === "daily" || mode === "hourly";
+  const delta = comparisonOffsetMs(offset);
   const points = totals.map((total) => ({
-    at: x(epochMs(total.to)),
-    left: bars ? x(epochMs(total.from)) : undefined,
+    at: x(epochMs(total.to) + delta),
+    left: bars ? x(epochMs(total.from) + delta) : undefined,
     top: total.totalMm === null ? undefined : y(total.totalMm),
     total,
   }));
@@ -121,6 +125,7 @@ export function RainfallTotalsPlot({
     const strokeDasharray = indicative ? "2 2" : dash;
     const title = (
       <title>
+        {offset !== 0 ? "Original " : ""}
         {utc(total.from)} to {utc(total.to)} UTC · {rainfallDepth(total.totalMm)} ·{" "}
         {rainfallTotalCoverage(total)}
       </title>

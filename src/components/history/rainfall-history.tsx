@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { ComparisonTable } from "@/components/compare/comparison-table";
 import { alignReadings } from "@/lib/compare";
+import { comparisonOffsetMs } from "@/lib/compare-time";
 import { Button } from "@/components/button";
 import { timeTicks } from "@/components/history/history-chart";
 import {
@@ -41,6 +42,7 @@ import {
 } from "@/lib/history/rainfall-totals";
 import { qualityLabel } from "@/lib/labels";
 import { epochMs, tickKey } from "@/lib/rdp/contract";
+import type { HistoryWindow } from "@/lib/history/range";
 
 // A categorical bar series would give every row a width, including rows with unverified timing.
 export function RainfallBars({
@@ -50,6 +52,8 @@ export function RainfallBars({
   fill = color,
   dash,
   opacity = 1,
+  offset = 0,
+  window,
 }: {
   intervals: History["intervals"];
   yAxisId?: number;
@@ -57,21 +61,30 @@ export function RainfallBars({
   fill?: string;
   dash?: string;
   opacity?: number;
+  offset?: number;
+  window?: HistoryWindow;
 }) {
   const x = useXAxisScale();
   const y = useYAxisScale(yAxisId);
   const baseline = y?.(0);
   if (!x || !y || baseline === undefined) return null;
 
+  const delta = comparisonOffsetMs(offset);
+  const start = window ? epochMs(window.from) : -Infinity;
+  const end = window ? epochMs(window.to) : Infinity;
   return intervals.map((row) => {
     const period = rainfallBounds(row);
-    const left = x(epochMs(period?.[0] ?? row.label));
-    const right = x(epochMs(period?.[1] ?? row.label));
+    const from = epochMs(period?.[0] ?? row.label) + delta;
+    const to = epochMs(period?.[1] ?? row.label) + delta;
+    if (period && (from >= end || to <= start)) return null;
+    const left = x(Math.max(from, start));
+    const right = x(Math.min(to, end));
     if (left === undefined || right === undefined) return null;
     const middle = (left + right) / 2;
-    const timing = period
+    const sourceTiming = period
       ? `${formatTime(period[0])} to ${formatTime(period[1])}`
       : `${formatTime(row.label)} (provider label, timing unverified)`;
+    const timing = offset === 0 ? sourceTiming : `Original ${sourceTiming}`;
     if (row.totalMm === null) {
       return (
         <path
