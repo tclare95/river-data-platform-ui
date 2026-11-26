@@ -369,6 +369,41 @@ describe("measurement explorer", () => {
     expect(mapMock.fitBounds).not.toHaveBeenCalled();
   });
 
+  it("loads a map measurement summary only when opened and labels a stale flow reading", async () => {
+    addPublishedPositions();
+    const fetchSummary = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        latest: {
+          kind: "instantaneous",
+          status: "available",
+          freshness: "stale",
+          observedAt: "2026-11-19T09:00:00Z",
+          value: 21.4,
+        },
+        summary: { status: "not_recent" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchSummary);
+    const user = userEvent.setup();
+    render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    await enableStations(user);
+    const map = within(screen.getByRole("region", { name: "River map" }));
+    const marker = await map.findByRole("button", { name: "Shardlow" });
+    await user.click(marker);
+    const details = within(document.getElementById(marker.getAttribute("aria-controls")!)!);
+    expect(fetchSummary).not.toHaveBeenCalled();
+    const summary = details.getByLabelText("Recent observations for Shardlow flow");
+    await user.click(summary);
+    const disclosure = within(summary.closest("details")!);
+    expect(await disclosure.findByText("21.4 m3/s")).toBeVisible();
+    expect(disclosure.getByText("Not recent")).toBeVisible();
+    expect(disclosure.getByText("Recent changes unavailable")).toBeVisible();
+    expect(fetchSummary).toHaveBeenCalledExactlyOnceWith(
+      "/api/measurements/ea-shardlow-flow/summary",
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
   it("shares a comparison between a marker and the accessible list and restores it from the URL", async () => {
     addPublishedPositions();
     const user = userEvent.setup();
@@ -836,6 +871,8 @@ describe("measurement explorer", () => {
       await panel.findByRole("list", { name: "Stations inside the modelled catchment" }),
     );
     expect(list.getAllByText("Upstream connection unverified")).toHaveLength(2);
+    expect(list.getByLabelText("Recent observations for Shardlow flow")).toBeInTheDocument();
+    expect(list.queryByLabelText("Recent observations for Stone rainfall")).not.toBeInTheDocument();
     expect(
       within(list.getByRole("link", { name: /^Rainfall/ }).closest("li")!).queryByText(
         "Upstream connection unverified",

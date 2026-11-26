@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { useId, type ReactNode } from "react";
 import { Button } from "@/components/button";
+import { ObservationSummaryDisclosure } from "@/components/observation-summary-disclosure";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { formatPeriod } from "@/lib/format";
 import { measurementPath, parameterLabel } from "@/lib/labels";
@@ -142,6 +143,7 @@ export function CatchmentMeasurements({
                             <span className="text-ink-muted">Upstream connection unverified</span>
                           ) : null}
                           {comparisonAction(measurement)}
+                          <ObservationSummaryDisclosure measurement={measurement} />
                         </li>
                       ))}
                     </ul>
