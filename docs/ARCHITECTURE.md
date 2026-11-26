@@ -159,7 +159,7 @@ counts. The fixture suite uses synthetic RDP responses and does not depend on th
 - **Series** (`series.ts`, pure): readings are plotted at their own source times on a linear time axis. Consecutive readings are joined only when they are at most 1.5 expected intervals apart and no known coverage gap lies between them; otherwise a `null` point breaks the line. Nothing is interpolated, resampled, smoothed or clipped, the y axis never forces zero and negative values are kept. A reading with no joined neighbour is drawn as a dot. The table inserts a "No readings for …" row at each break.
 - **Coverage**: RDP's verdict is shown in words. `unknown` (today's honest default) says the record is not verified complete; `partial` lists known gaps by reason, which are also shaded on the chart; only `complete` says complete.
 - **Page** (`src/components/history/`): `MeasurementHistory` streams under its own `Suspense` (keyed by range) via a never-rejecting promise and `use`, so the latest reading is never held back. `HistoryChart` and `ObservationTable` are the only client components; the table (newest first, 100 rows per page, values exactly as returned, observed/stored times and revision) sits in a `<details>` disclosure below the chart.
-- **Upstream cost**: a detail view makes at most latest + health + one history page per 2,000 readings (two for 30 days at 15 minutes, including rainfall lookback), each first read cached for 60 s.
+- **Upstream cost**: detail uses latest + health + one chart history page per 2,000 readings (two for 30 days at 15 minutes, including rainfall lookback). Supported measurements also use the bounded summary read below. First reads are cached for 60 s.
 
 ### Rainfall chart windows
 
@@ -168,6 +168,27 @@ For detail and shared comparison, the existing loader fetches up to 7 days befor
 `rainfall-totals.ts` is a pure application transform over one gauge's assembled rows. Exact totals include only eligible, whole periods matching a UTC grid slot and the row's RDP-declared boundaries. A period-end label at the right boundary can count, and a period-start label there belongs to the next window. The UI honours conventions only on rows where RDP supplies evidence. Where labels have unverified timing, an indicative total instead sums eligible labels in the UTC window `[from, to)`. Duplicate labels cannot add depth twice, conflicting versions or overlapping verified periods leave uncovered slots, and no partial interval is prorated. RDP's archival coverage verdict remains distinct from the transform's expected-slot count.
 
 Hourly and daily buckets are UTC calendar buckets. A clipped day uses the expected count for a full day and shows partial coverage. Rolling and cumulative values sample at whole UTC hours, with the first rolling sample at the visible start and the first cumulative sample one hour later. Partial results report the depth actually used and the eligible/expected count. Unavailable results leave gaps. The accessible tables show the UTC bounds and coverage for every derived point. See [RDP's rainfall read contract and evidence](https://github.com/tclare95/river-data-platform/blob/main/docs/RAINFALL.md#read-contract).
+
+### Recent level and flow summaries
+
+The latest published observation anchors the summary. It must be marked fresh by RDP and be within two
+expected intervals of now. The detail page reuses its latest reading. Map and catchment disclosures load
+on demand via `/api/measurements/{id}/summary`, under the measurement API rate-limit path.
+All three surfaces use the same cached RDP history adapter for one page of up to 1,500 readings spanning
+just over 24 hours. The chart’s whole-hour window can exclude the latest observations. A continued page
+or a conflict between the latest and historical value at the same instant leaves recent changes unavailable.
+
+Comparisons use the closest actual reading to 1, 6 or 24 hours before the latest, within half the expected
+interval and at most 15 minutes. A tie uses the earlier reading. Each comparison requires observations
+without a known coverage gap or spacing above 1.5 expected intervals through the latest reading. The
+24-hour extrema and sparkline use only observations within the window, with the first no more than one
+expected interval from the start and the same gap checks. Unknown coverage can coexist with real readings,
+and these checks do not establish complete source coverage.
+
+Recent rate uses the 1-hour comparison divided by its actual elapsed time. For levels measured in metres,
+rates from −0.01 to +0.01 m/h are broadly stable. For flow measured in cubic metres per second, the
+deadband per hour is the larger of 0.01 in the published flow unit or 2% of the larger absolute endpoint.
+These are display thresholds for small fluctuations. The remaining rates are rising or falling by sign.
 
 ## Comparison
 

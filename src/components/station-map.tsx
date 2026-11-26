@@ -6,6 +6,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import type { Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import { Button } from "@/components/button";
 import { CatchmentMeasurements, type CatchmentDiscovery } from "./catchment-measurements";
+import { ObservationSummaryDisclosure } from "./observation-summary-disclosure";
 import {
   drawRiverTrace,
   traceCatchment,
@@ -679,6 +680,7 @@ export function StationMap({
                     {parameterLabel(measurement.parameter)}
                   </Link>
                   {comparisonAction(measurement)}
+                  <ObservationSummaryDisclosure measurement={measurement} />
                 </li>
               ))}
             </ul>

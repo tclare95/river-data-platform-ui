@@ -2,13 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import type { ReactNode } from "react";
+import { Suspense, use, type ReactNode } from "react";
 import { PageMain } from "@/components/container";
 import { MeasurementHistory } from "@/components/history/measurement-history";
 import { describeLatest, FRESHNESS_LABEL, NO_DEPTH, Time } from "@/components/latest-reading";
+import { ObservationSummaryStats } from "@/components/observation-summary";
 import { PageHeader } from "@/components/page-header";
 import { Attribution, FixtureNote } from "@/components/provenance";
-import { EmptyState, ErrorState } from "@/components/states";
+import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { sentenceCase } from "@/lib/format";
 import {
   cadenceLabel,
@@ -19,6 +20,11 @@ import {
   qualityLabel,
 } from "@/lib/labels";
 import { compareHref } from "@/lib/compare";
+import { loadObservationSummary } from "@/lib/history/load-observation-summary";
+import {
+  supportsObservationSummary,
+  type ObservationSummary,
+} from "@/lib/history/observation-summary";
 import { parseRange } from "@/lib/history/range";
 import { loadMeasurementDetail } from "@/lib/measurement-detail";
 import { epochMs } from "@/lib/rdp/contract";
@@ -158,6 +164,9 @@ function LatestSection({
         <p className="mt-2 text-ink-muted">
           {view.lead}
           {view.when}
+          {view.freshness === "fresh" && supportsObservationSummary(measurement)
+            ? ` · ${FRESHNESS_LABEL.fresh}`
+            : null}
         </p>
         {view.freshness !== "fresh" ? (
           <p className="mt-3 font-medium">
@@ -200,6 +209,16 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
   );
 }
 
+function RecentChanges({
+  measurement,
+  summary,
+}: {
+  measurement: PublicMeasurement;
+  summary: Promise<ObservationSummary>;
+}) {
+  return <ObservationSummaryStats measurement={measurement} summary={use(summary)} />;
+}
+
 export default async function MeasurementPage({ params, searchParams }: Props) {
   await connection();
   const detail = await loadMeasurementDetail((await params).id);
@@ -236,6 +255,21 @@ export default async function MeasurementPage({ params, searchParams }: Props) {
   const latestSection = (
     <div className="mt-8 max-w-copy">
       <LatestSection measurement={measurement} latest={latest} checkedAt={checkedAt} />
+      {supportsObservationSummary(measurement) ? (
+        <section aria-labelledby="recent-changes" className="mt-4 space-y-2">
+          <h2 id="recent-changes" className="text-lg font-semibold tracking-tight">
+            Recent changes
+          </h2>
+          <div className="rounded-lg border border-line bg-surface px-5 py-4 sm:px-6">
+            <Suspense fallback={<LoadingState label="Loading recent changes" lines={2} />}>
+              <RecentChanges
+                measurement={measurement}
+                summary={loadObservationSummary(measurement, latest)}
+              />
+            </Suspense>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
   return (

@@ -86,9 +86,11 @@ export const NO_DEPTH = "Depth not reported (quality check failed)";
 export function LatestLine({
   measurement,
   latest,
+  showFreshness = false,
 }: {
   measurement: PublicMeasurement;
   latest: PublicLatest | null;
+  showFreshness?: boolean;
 }) {
   const view = describeLatest(measurement, latest);
   if (view.state === "unavailable")
@@ -103,7 +105,7 @@ export function LatestLine({
         <span className="text-ink-muted">{NO_DEPTH}</span>
       )}{" "}
       <span className="text-ink-muted">{view.when}</span>
-      {view.freshness !== "fresh" ? (
+      {showFreshness || view.freshness !== "fresh" ? (
         <span className="whitespace-nowrap">
           <span className="text-ink-muted"> · </span>
           <span className="font-medium text-ink">{FRESHNESS_LABEL[view.freshness]}</span>

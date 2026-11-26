@@ -11,8 +11,12 @@ export function formatTime(timestamp: string): string {
   return time.format(new Date(Date.parse(timestamp.replace(/(\.\d{3})\d+Z$/, "$1Z"))));
 }
 
-export function formatNumber(value: number, unit: string): string {
-  return `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3 }).format(value)} ${unit}`;
+export function formatNumber(
+  value: number,
+  unit: string,
+  options?: Pick<Intl.NumberFormatOptions, "signDisplay">,
+): string {
+  return `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3, ...options }).format(value)} ${unit}`;
 }
 
 export function formatPeriod(seconds: number): string {

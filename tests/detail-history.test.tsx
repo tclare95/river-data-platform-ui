@@ -52,6 +52,17 @@ async function renderDetail(id: string, range?: string) {
 describe("measurement history on the detail page", () => {
   beforeEach(() => useClient(createFixtureTransport(() => NOW)));
 
+  it("shows recent changes alongside the latest reading and the longer history", async () => {
+    await renderDetail("ea-shardlow-level");
+    const latest = screen.getByRole("region", { name: "Latest reading" });
+    expect(latest).toHaveTextContent("Recent");
+    const summary = screen.getByRole("region", { name: "Recent changes" });
+    expect(await within(summary).findByText("1 h change")).toBeInTheDocument();
+    expect(within(summary).getByText("24 h minimum").nextElementSibling).toHaveTextContent("mASD");
+    expect(within(summary).getByText("Recent rate").nextElementSibling).toHaveTextContent("m/h");
+    expect(within(summary).getByRole("img", { name: /previous 24 hours/ })).toBeInTheDocument();
+  });
+
   it("charts every reading across pages for 30 days, with a table and honest coverage", async () => {
     const history = await renderDetail("ea-colwick-level", "30d");
     expect(await within(history).findByRole("img", { name: /^Water level/ })).toBeInTheDocument();

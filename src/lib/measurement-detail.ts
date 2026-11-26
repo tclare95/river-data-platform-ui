@@ -62,21 +62,28 @@ export const loadPublishedMeasurement = cache(async (id: string): Promise<Publis
   };
 });
 
+/** Public latest observation and retrieval time for a resolved, displayable measurement. */
+export const loadMeasurementLatest = cache(async (id: string) => {
+  const batch = await getRdpClient()
+    .getLatest([id])
+    .catch(() => null);
+  const item = batch?.items.find((entry) => entry.measurementId === id);
+  return {
+    // A failed latest read is shown as unavailable, never replaced by health or history.
+    latest: item ? toPublicLatest(item) : null,
+    checkedAt: item && batch ? batch.retrievedAt : null,
+  };
+});
+
 /** The measurement with RDP's latest state. A failed latest read leaves the catalogue entry intact. */
 export const loadMeasurementDetail = cache(async (id: string): Promise<MeasurementDetail> => {
   const published = await loadPublishedMeasurement(id);
   if (published.status !== "ok") return published;
-  const rdp = getRdpClient();
-  const [batch, health] = await Promise.all([
-    rdp.getLatest([id]).catch(() => null),
-    rdp.getHealth(id).then(toPublicHealth, () => null),
+  const [reading, health] = await Promise.all([
+    loadMeasurementLatest(id),
+    getRdpClient()
+      .getHealth(id)
+      .then(toPublicHealth, () => null),
   ]);
-  const item = batch?.items.find((entry) => entry.measurementId === id);
-  return {
-    ...published,
-    // A failed latest read is shown as unavailable, never replaced by health or history.
-    latest: item ? toPublicLatest(item) : null,
-    checkedAt: item && batch ? batch.retrievedAt : null,
-    health,
-  };
+  return { ...published, ...reading, health };
 });
