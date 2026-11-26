@@ -71,6 +71,23 @@ describe("live signed transport", () => {
     expect(headers["x-amz-security-token"]).toBe("fixture-session");
   });
 
+  it("signs only the consumer inventory area GET with its bounded query", async () => {
+    const { transport, fetch } = setup([json(409, { error: { code: "INVENTORY_CHANGED" } })]);
+    const query = { bbox: "-1.5,52.6,-1,53", limit: "200", cursor: "next" };
+    const area = { ...request, path: "/v1/discovery/area", query };
+    await expect(transport(area)).rejects.toMatchObject({ code: "INVENTORY_CHANGED", status: 409 });
+    const [url, init] = fetch.mock.calls[0];
+    const target = new URL(String(url));
+    expect(target.pathname).toBe("/staging/v1/discovery/area");
+    expect(Object.fromEntries(target.searchParams)).toEqual(query);
+    expect(init?.method).toBe("GET");
+    expect((init?.headers as Record<string, string>).authorization).toMatch(/^AWS4-HMAC-SHA256 /);
+    await expect(transport({ ...area, path: "/v1/inventory/area" })).rejects.toMatchObject({
+      code: "INVALID_QUERY",
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it("reuses credentials until they near expiry and shares one exchange between concurrent reads", async () => {
     const { transport, assumeRole } = setup([json(200, {}), json(200, {}), json(200, {})]);
     await Promise.all([transport(request), transport(request)]);

@@ -1,4 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["dub1"]
+  "regions": ["dub1"],
+  "functions": {
+    "src/app/api/discovery/area/route.ts": { "supportsCancellation": true }
+  }
 }

@@ -1,6 +1,8 @@
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { INVENTORY_DEBOUNCE_MS } from "@/components/inventory-map";
+import type { InventoryArea, InventoryStation } from "@/lib/inventory";
 import { MeasurementExplorer } from "@/components/measurement-explorer";
 import { loadChartHistory, type HistoryResult } from "@/lib/history/load";
 import { rangeWindow } from "@/lib/history/range";
@@ -14,6 +16,9 @@ import type { PublicUpstreamMeasurements } from "@/lib/rdp/upstream-measurements
 const mapMock = vi.hoisted(() => ({
   fail: false,
   events: new EventTarget(),
+  bounds: [-8.7, 49.8, 2.1, 60.9],
+  project: vi.fn(([lng, lat]: [number, number]) => ({ x: lng * 1000, y: lat * 1000 })),
+  easeTo: vi.fn(),
   create: vi.fn(),
   fitBounds: vi.fn(),
   setLngLat: vi.fn(),
@@ -41,6 +46,14 @@ vi.mock("maplibre-gl", () => ({
     getContainer = () => this.options.container;
     getCenter = () => ({ wrap: () => ({ lng: -1.3, lat: 52.8 }) });
     getZoom = () => 8.5;
+    getBounds = () => ({
+      getWest: () => mapMock.bounds[0],
+      getSouth: () => mapMock.bounds[1],
+      getEast: () => mapMock.bounds[2],
+      getNorth: () => mapMock.bounds[3],
+    });
+    project = mapMock.project;
+    easeTo = mapMock.easeTo;
     addLayer = mapMock.addLayer;
     addSource = mapMock.addSource;
     getSource = () =>
@@ -190,6 +203,8 @@ describe("measurement explorer", () => {
       vi.fn<typeof fetch>().mockImplementation(async (url) => historyResponse(url)),
     );
     mapMock.fail = false;
+    mapMock.bounds = [-8.7, 49.8, 2.1, 60.9];
+    mapMock.easeTo.mockClear();
     mapMock.events = new EventTarget();
     mapMock.create.mockClear();
     mapMock.fitBounds.mockClear();
@@ -198,7 +213,10 @@ describe("measurement explorer", () => {
     mapMock.addSource.mockClear();
     mapMock.addLayer.mockClear();
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   function historyResponse(
     url: Parameters<typeof fetch>[0],
@@ -241,6 +259,163 @@ describe("measurement explorer", () => {
       }
     }
   }
+
+  function providerStation(name: string, longitude: number, published = false): InventoryStation {
+    return {
+      key: name,
+      name,
+      position: { longitude, latitude: 52.81, precisionMetres: 10 },
+      measures: [
+        {
+          parameter: published ? "level" : "rainfall",
+          qualifier: null,
+          measurementId: published ? "ea-shardlow-level" : null,
+          status: published ? "published" : "not_published",
+        },
+      ],
+    };
+  }
+
+  function inventoryResponse(stations: InventoryStation[], truncated = false) {
+    return Response.json({
+      data: {
+        stations,
+        truncated,
+        coverage: [
+          {
+            providerId: "environment-agency",
+            label: "Environment Agency",
+            status: "stale",
+            lastVerifiedAt: "2026-11-26T00:00:00Z",
+            unpositioned: 4,
+            measureDetailPartial: false,
+            attribution:
+              "Contains Environment Agency data licensed under the Open Government Licence v3.0.",
+          },
+          {
+            providerId: "sepa",
+            label: "Scottish Environment Protection Agency",
+            status: "not_integrated",
+            lastVerifiedAt: null,
+            unpositioned: null,
+            measureDetailPartial: false,
+          },
+        ],
+      } satisfies InventoryArea,
+    });
+  }
+
+  function moveArea(bounds: number[]) {
+    act(() => {
+      mapMock.events.dispatchEvent(new Event("movestart"));
+      mapMock.bounds = bounds;
+      mapMock.events.dispatchEvent(new Event("moveend"));
+    });
+  }
+
+  it("debounces bounded map reads, aborts a superseded read and ignores its late result", async () => {
+    let finishOld!: (response: Response) => void;
+    const readArea = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishOld = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(inventoryResponse([providerStation("New gauge", -1.2)]));
+    vi.stubGlobal("fetch", readArea);
+    render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
+    await screen.findByText("Zoom in to discover provider stations.");
+    vi.useFakeTimers();
+    moveArea([-1.6, 52.5, -1.1, 53]);
+    await act(() => vi.advanceTimersByTimeAsync(INVENTORY_DEBOUNCE_MS - 1));
+    expect(readArea).not.toHaveBeenCalled();
+    moveArea([-1.5, 52.5, -1, 53]);
+    await act(() => vi.advanceTimersByTimeAsync(INVENTORY_DEBOUNCE_MS));
+    expect(readArea).toHaveBeenCalledOnce();
+    const [url, init] = readArea.mock.calls[0];
+    expect(new URL(String(url), location.origin).searchParams.get("bbox")).toBe(
+      "-1.500000,52.500000,-1.000000,53.000000",
+    );
+
+    moveArea([-1.4, 52.5, -0.9, 53]);
+    expect(init?.signal?.aborted).toBe(true);
+    await act(() => vi.advanceTimersByTimeAsync(INVENTORY_DEBOUNCE_MS));
+    await act(async () => finishOld(inventoryResponse([providerStation("Old gauge", -1.4)])));
+    expect(screen.getByRole("button", { name: "New gauge · Provider inventory" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Old gauge/ })).not.toBeInTheDocument();
+
+    moveArea([2.1, 52.5, 2.4, 53]);
+    await act(() => vi.advanceTimersByTimeAsync(INVENTORY_DEBOUNCE_MS));
+    expect(screen.getByText(/outside the Great Britain inventory search area/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /New gauge/ })).not.toBeInTheDocument();
+    expect(readArea).toHaveBeenCalledTimes(2);
+  });
+
+  it("clusters nearby inventory stations and shows known types, publication and incomplete coverage", async () => {
+    addPublishedPositions();
+    const fetchInventory = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        inventoryResponse(
+          [
+            providerStation("First rain gauge", -1.3),
+            providerStation("Second rain gauge", -1.299),
+            providerStation("Shardlow inventory", -1.1, true),
+          ],
+          true,
+        ),
+      );
+    vi.stubGlobal("fetch", fetchInventory);
+    render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    await screen.findByText("Zoom in to discover provider stations.");
+    moveArea([-1.5, 52.5, -1, 53]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "2 stations" }));
+    expect(mapMock.easeTo).toHaveBeenCalledWith({ center: [-1.3, 52.81], zoom: 10.5 });
+    expect(screen.getByText(/Results are limited/)).toBeVisible();
+    await user.click(screen.getByText("Provider inventory coverage"));
+    expect(screen.getByText(/Environment Agency · Stale inventory · Verified/)).toBeVisible();
+    expect(
+      screen.getByText(/Scottish Environment Protection Agency · Inventory not yet supported/),
+    ).toBeVisible();
+
+    await user.click(screen.getByText("Browse stations in this map area"));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Provider station" }),
+      "Second rain gauge",
+    );
+    expect(screen.getByRole("heading", { name: "Second rain gauge" })).toHaveFocus();
+    expect(screen.getByText("Rainfall", { selector: "span" })).toBeVisible();
+    expect(screen.getByText("No data published by RDP")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Shardlow inventory · Published by RDP" }));
+    expect(screen.getByRole("heading", { name: "Shardlow inventory" })).toHaveFocus();
+    expect(
+      screen
+        .getAllByRole("link", { name: "Water level" })
+        .some((link) => link.getAttribute("href") === "/measurements/ea-shardlow-level"),
+    ).toBe(true);
+    expect(fetchInventory).toHaveBeenCalledOnce();
+  });
+
+  it("offers a retry when the provider inventory is unavailable", async () => {
+    const fetchInventory = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(inventoryResponse([]));
+    vi.stubGlobal("fetch", fetchInventory);
+    render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
+    await screen.findByText("Zoom in to discover provider stations.");
+    moveArea([-1.5, 52.5, -1, 53]);
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("button", { name: "Retry station discovery" }));
+    expect(
+      await screen.findByText("No stations from available inventories in this map area"),
+    ).toBeVisible();
+    expect(fetchInventory).toHaveBeenCalledTimes(2);
+  });
 
   it("starts with just the GB basemap and traces an explicit point when no stations are published", async () => {
     const user = userEvent.setup();

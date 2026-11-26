@@ -1,4 +1,6 @@
 import "server-only";
+import { readInventoryBounds, type InventoryArea } from "../inventory";
+import { DISCOVERY_AREA_PATH, INVENTORY_PAGE_SIZE, parseInventoryPage } from "./inventory";
 import {
   epochMs,
   isMeasurementId,
@@ -74,6 +76,7 @@ export type RdpClient = {
   getLatest(ids: readonly string[]): Promise<LatestBatch>;
   getHealth(id: string): Promise<Health>;
   getHistory(id: string, query: HistoryQuery): Promise<HistoryPage>;
+  discoverArea(bbox: string, signal?: AbortSignal): Promise<InventoryArea>;
   locateRiver(lon: string, lat: string): Promise<RiverLocation>;
   getUpstreamMeasurements(
     query: UpstreamMeasurementQuery,
@@ -272,6 +275,44 @@ export function createRdpClient(options: ClientOptions): RdpClient {
     );
   }
 
+  async function discoverArea(bbox: string, signal?: AbortSignal): Promise<InventoryArea> {
+    const bounds = readInventoryBounds(bbox);
+    if (!bounds) throw new RdpError("INVALID_QUERY");
+    const deadline = AbortSignal.timeout(20_000);
+    signal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    // One restart for a snapshot rollover, under the same deadline and limiter.
+    for (let attempt = 0; ; attempt++) {
+      const stations = new Map<string, InventoryArea["stations"][number]>();
+      let coverage: InventoryArea["coverage"] = [];
+      let cursor: string | null = null;
+      try {
+        for (let page = 0; page < 3; page++) {
+          const query: Record<string, string> = { bbox, limit: String(INVENTORY_PAGE_SIZE) };
+          if (cursor) query.cursor = cursor;
+          const result = await call(
+            DISCOVERY_AREA_PATH,
+            { path: DISCOVERY_AREA_PATH, query, timeoutMs: TIMEOUT_MS.short, signal },
+            (body) => parseInventoryPage(body, bounds),
+          );
+          if (result.continuation !== null && result.continuation === cursor)
+            throw new RdpError("RESPONSE_CONTRACT_ERROR");
+          for (const station of result.stations) {
+            if (stations.has(station.key)) throw new RdpError("RESPONSE_CONTRACT_ERROR");
+            stations.set(station.key, station);
+          }
+          coverage = result.coverage;
+          cursor = result.continuation;
+          if (!cursor) break;
+        }
+        return { stations: [...stations.values()], coverage, truncated: cursor !== null };
+      } catch (error) {
+        if (attempt === 0 && error instanceof RdpError && error.code === "INVENTORY_CHANGED")
+          continue;
+        throw error;
+      }
+    }
+  }
+
   async function locateRiver(lon: string, lat: string): Promise<RiverLocation> {
     if (!isRiverCoordinate(lon, 180) || !isRiverCoordinate(lat, 90))
       throw new RdpError("INVALID_QUERY");
@@ -459,6 +500,7 @@ export function createRdpClient(options: ClientOptions): RdpClient {
     getLatest,
     getHealth,
     getHistory,
+    discoverArea,
     locateRiver,
     getUpstreamMeasurements,
     getRiverRoute,

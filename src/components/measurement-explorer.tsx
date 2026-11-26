@@ -177,6 +177,7 @@ export function MeasurementExplorer({
         </a>
         <StationMap
           stations={stations}
+          items={items}
           filteredStationIds={filteredStationIds}
           initialView={start.map?.view}
           initialTrace={start.map?.trace}
