@@ -1,4 +1,5 @@
 import "server-only";
+import { DISCOVERY_AREA_PATH } from "./inventory";
 import { AssumeRoleWithWebIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import { Hash } from "@smithy/hash-node";
 import { SignatureV4 } from "@smithy/signature-v4";
@@ -126,6 +127,7 @@ export function createLiveTransport(
       !OBSERVATION_PATH.test(path) &&
       path !== RIVER_LOCATE_PATH &&
       path !== UPSTREAM_MEASUREMENTS_PATH &&
+      path !== DISCOVERY_AREA_PATH &&
       !RIVER_SAMPLE_PATH.test(path)
     )
       throw new RdpError("INVALID_QUERY");
