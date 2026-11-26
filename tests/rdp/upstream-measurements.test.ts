@@ -113,7 +113,7 @@ function catalogueMeasurement(
   };
 }
 
-function stub(body: unknown) {
+function stub(body: unknown, catalogue?: ReturnType<typeof catalogueMeasurement>[]) {
   const transport = vi.fn(async ({ path }: RdpRequest) => {
     if (path === UPSTREAM_MEASUREMENTS_PATH) {
       if (body instanceof Error) throw body;
@@ -121,7 +121,7 @@ function stub(body: unknown) {
     }
     if (path !== "/v1/measurements") throw new Error("unexpected upstream request");
     return {
-      data: [
+      data: catalogue ?? [
         catalogueMeasurement("ea-example-level"),
         catalogueMeasurement("ea-example-rain"),
         catalogueMeasurement("private-id", "private-station", "unapproved-provider"),
@@ -180,10 +180,35 @@ describe("upstream measurements application route", () => {
     expect(transport.mock.calls[0][0]).toMatchObject({
       path: UPSTREAM_MEASUREMENTS_PATH,
       query,
-      maxResponseBytes: 256 * 1024,
+      maxResponseBytes: 4 * 1024 * 1024,
       signal: expect.any(AbortSignal),
     });
     expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it("projects all 500 measurements allowed by managed publication", async () => {
+    const body = available();
+    const ids = Array.from({ length: 500 }, (_, index) => `ea-example-level-${index}`);
+    body.data = [wireStation("ea-example", "environment-agency", ids)];
+    body.meta.complete = true;
+    body.meta.counts = {
+      withinCatchment: 1,
+      outside: 0,
+      unknown: 0,
+      ambiguous: 0,
+      nearBoundary: 0,
+    };
+    stub(
+      body,
+      ids.map((id) => catalogueMeasurement(id)),
+    );
+
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    const { data } = await response.json();
+    expect(
+      data.data[0].measurements.map((row: { measurementId: string }) => row.measurementId),
+    ).toEqual(ids);
   });
 
   it.each([
@@ -260,7 +285,8 @@ describe("upstream measurements application route", () => {
     { release: { ...release, token: "0000000000000000" } },
     { release: { ...release, version: "0".repeat(64), token: "0".repeat(16) } },
     { upstream: "https://example.test/private" },
-    { data: Array(41).fill(null) },
+    { data: Array(501).fill(null) },
+    { meta: { ...available().meta, counts: { ...available().meta.counts, outside: 497 } } },
     { data: [wireStation("ea-example", "environment-agency", ["same-id", "same-id"])] },
     { catchment: { ...available().catchment, areaKm2: 0 } },
     { catchment: { ...available().catchment, pourPointOffsetM: -1 } },

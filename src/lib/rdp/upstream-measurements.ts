@@ -5,6 +5,7 @@ import {
   finite,
   integer,
   isMeasurementId,
+  MAX_PUBLISHED_MEASUREMENTS,
   object,
   oneOf,
   parseLocation,
@@ -21,8 +22,7 @@ import {
 } from "./river-tracer";
 
 export const UPSTREAM_MEASUREMENTS_PATH = "/v1/river/upstream-measurements";
-export const MAX_UPSTREAM_MEASUREMENTS_BYTES = 256 * 1024;
-const MAX_MEASUREMENTS = 40;
+export const MAX_UPSTREAM_MEASUREMENTS_BYTES = 4 * 1024 * 1024;
 
 export function isRiverReleaseToken(value: unknown): value is string {
   return typeof value === "string" && value.length === 16 && /^[a-f0-9]+$/.test(value);
@@ -49,7 +49,7 @@ function nonNegative(value: unknown) {
 
 function stationCount(value: unknown) {
   const count = integer(value);
-  return count >= 0 && count <= MAX_MEASUREMENTS ? count : fail();
+  return count >= 0 && count <= MAX_PUBLISHED_MEASUREMENTS ? count : fail();
 }
 
 function validateSample(sample: unknown, upstream: unknown, token: string) {
@@ -121,14 +121,14 @@ export function parseUpstreamMeasurements(body: unknown, query: UpstreamMeasurem
 
   const stationIds = new Set<string>();
   const measurementIds = new Set<string>();
-  const stations = array(root.data, MAX_MEASUREMENTS).map((value) => {
+  const stations = array(root.data, MAX_PUBLISHED_MEASUREMENTS).map((value) => {
     const row = object(value);
     const stationId = id(row.stationId);
     if (stationIds.has(stationId)) fail();
     stationIds.add(stationId);
     const location = parseLocation(object(row.location));
     if (location.status !== "verified") return fail();
-    const measurements = array(row.measurements, MAX_MEASUREMENTS).map((value) => {
+    const measurements = array(row.measurements, MAX_PUBLISHED_MEASUREMENTS).map((value) => {
       const row = object(value);
       const { measurementId } = row;
       if (!isMeasurementId(measurementId) || measurementIds.has(measurementId)) return fail();
@@ -138,7 +138,7 @@ export function parseUpstreamMeasurements(body: unknown, query: UpstreamMeasurem
       if (relationship !== (kind === "rainfall" ? "not_applicable" : "not_assessed")) fail();
       return { measurementId, parameter: kind, networkRelationship: relationship };
     });
-    if (measurements.length === 0 || measurementIds.size > MAX_MEASUREMENTS) fail();
+    if (measurements.length === 0 || measurementIds.size > MAX_PUBLISHED_MEASUREMENTS) fail();
     return {
       stationId,
       provider: string(row.provider),
@@ -164,7 +164,7 @@ export function parseUpstreamMeasurements(body: unknown, query: UpstreamMeasurem
     meta.complete !== complete ||
     counts.withinCatchment !== stations.length ||
     measurementIds.size + counts.outside + counts.unknown + counts.ambiguous + counts.nearBoundary >
-      MAX_MEASUREMENTS
+      MAX_PUBLISHED_MEASUREMENTS
   )
     fail();
 

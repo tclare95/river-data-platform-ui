@@ -17,18 +17,18 @@ export function CatchmentMeasurements({
   refreshTrace,
   comparisonAction,
 }: {
-  discovery?: CatchmentDiscovery;
+  discovery: CatchmentDiscovery;
   find: () => void;
   refreshTrace: () => void;
   comparisonAction: (measurement: PublicMeasurement) => ReactNode;
 }) {
   const titleId = useId();
-  const result = discovery?.status === "result" ? discovery.data : undefined;
+  const result = discovery.status === "result" ? discovery.data : undefined;
   const available = result?.status === "available" ? result : undefined;
   const counts = available?.meta.counts;
   const stationCount = available?.data.length ?? 0;
-  const loading = discovery?.status === "loading";
-  const releaseChanged = discovery?.status === "release-changed";
+  const loading = discovery.status === "loading";
+  const releaseChanged = discovery.status === "release-changed";
 
   return (
     <section aria-labelledby={titleId} className="space-y-2 border-t border-line px-5 py-3 sm:px-6">
@@ -36,9 +36,11 @@ export function CatchmentMeasurements({
         <h2 id={titleId} className="font-semibold">
           Catchment measurements
         </h2>
-        <Button aria-disabled={loading} onClick={releaseChanged ? refreshTrace : find}>
-          {releaseChanged ? "Refresh catchment" : "Find measurements"}
-        </Button>
+        {releaseChanged || discovery.status === "unavailable" ? (
+          <Button onClick={releaseChanged ? refreshTrace : find}>
+            {releaseChanged ? "Refresh catchment" : "Try again"}
+          </Button>
+        ) : null}
       </div>
       {loading ? (
         <LoadingState label="Finding measurements" lines={1} className="px-3 py-3" />
@@ -46,7 +48,7 @@ export function CatchmentMeasurements({
       {releaseChanged ? (
         <ErrorState title="The river network release has changed" className="px-3 py-2" />
       ) : null}
-      {discovery?.status === "unavailable" ? (
+      {discovery.status === "unavailable" ? (
         <ErrorState title="Measurement search unavailable" className="px-3 py-2" />
       ) : null}
       {result && !available ? (
@@ -73,9 +75,6 @@ export function CatchmentMeasurements({
             <p>Search covers published rainfall, level and flow only.</p>
             {counts.withinCatchment > stationCount ? (
               <p>Some matching stations could not be displayed.</p>
-            ) : null}
-            {stationCount > 0 ? (
-              <p>Upstream connections for level and flow are unverified.</p>
             ) : null}
             {counts.unknown + counts.ambiguous > 0 ? (
               <p>Published stations with missing or uncertain positions were excluded.</p>
@@ -123,6 +122,9 @@ export function CatchmentMeasurements({
                               : ""}
                             )
                           </Link>
+                          {measurement.networkRelationship === "not_assessed" ? (
+                            <span className="text-ink-muted">Upstream connection unverified</span>
+                          ) : null}
                           {comparisonAction(measurement)}
                         </li>
                       ))}

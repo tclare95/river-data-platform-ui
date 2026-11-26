@@ -85,8 +85,8 @@ in-process cache holds up to eight validated release/sample/direction/geometry r
 reads evicted. Coordinate queries and public responses are uncached. The public JSON cap is 4 MiB. Include the
 tracer path in the Vercel Firewall rate-limit rule before enabling live traffic.
 
-The river map's opt-in Trace river mode calls this application endpoint from a map point or a verified station
-position. Station markers still open station details. One MapLibre source displays the selected point, any published
+Selecting a map point, the map centre or a verified station position starts an upstream trace. Subsequent
+direction changes apply to that point. Station markers still open station details. One MapLibre source displays the selected point, any published
 snapped sample, independently toggled upstream and downstream reaches, and a toggleable catchment. Directions are
 loaded on demand for the current point and only combined within the same release. Changing the trace point or
 direction cancels the previous browser request. A zero-offset pour point shares the snapped sample's coordinates.
@@ -99,9 +99,9 @@ environment. See the [RDP rollout instructions](https://github.com/tclare95/rive
 
 ### Catchment measurement discovery
 
-River Tracer starts upstream and displays the published catchment when available. The contextual
-measurement list and verified station highlights load on request, independently of catalogue search
-filters. Both use the shared comparison selection and its existing compatibility rules.
+A published catchment boundary triggers release-pinned measurement discovery automatically. Its measurement
+list and station highlights are independent of catalogue search filters. Measurement links open the existing
+detail page. Comparison actions use the shared selection and compatibility rules.
 
 `GET /api/river/upstream-measurements?lon=&lat=&release=` takes one WGS84 point and an optional
 16-character lowercase hex token. Pass the first 16 characters of the displayed River Tracer release
@@ -125,16 +125,18 @@ point or release changes and ignore any result from the previous selection.
   `CANCELLED` (499), `UNAVAILABLE` (503) and `TIMEOUT` (504).
 
 Discovery adds one exact signed GET using the shared limiter, retry policy and credential exchange. It reads
-the cached published catalogue only for available results. Discovery is uncached, checks the 40-measurement
-RDP ceiling and caps incoming and outgoing discovery JSON at 256 KiB. It allows 20 seconds for the signed
-read and 25 seconds for the application request, including any catalogue wait. The browser aborts the
-unshared signed read through the request signal. Shared catalogue loads retain their own budget.
+the cached published catalogue only for available results. Discovery is uncached and caps incoming and outgoing
+JSON at 4 MiB. Both parsers accept the managed RDP publication limit of 500 measurements (#140).
+Discovery allows 20 seconds for the signed read and 25 seconds for the application request, including any
+catalogue wait. The browser aborts the unshared signed read through the request signal. Shared catalogue
+loads retain their own budget.
 
-Live availability is unverified. RDP PR #149 ships with both stages default-off. For each stage, the operator
-must verify the pinned River Tracer release is available, apply the reviewed Read Lambda boundary rendered
-with `--river-api` and UI caller policy rendered with `--ui --river`, and release the stage with
-`catchment_measurements: true` if still disabled. Include this application route in the Vercel Firewall
-rate-limit rule. See the [RDP activation contract](https://github.com/tclare95/river-data-platform/blob/2371698f6cb1ab8a3a9499c26b3efc9f635b667e/docs/READ-API.md#catchment-measurement-discovery).
+RDP PR [#150](https://github.com/tclare95/river-data-platform/pull/150) enables
+`catchment_measurements` in the committed production config. The staging flag remains off.
+A live check needs the pinned River Tracer release, the Read Lambda boundary rendered with `--river-api`,
+the UI caller policy rendered with `--ui --river`, and the stage released with discovery enabled. Include this
+application route in the Vercel Firewall rate-limit rule. See the
+[RDP activation contract](https://github.com/tclare95/river-data-platform/blob/2371698f6cb1ab8a3a9499c26b3efc9f635b667e/docs/READ-API.md#catchment-measurement-discovery).
 
 Run the signed smoke from the Vercel UI Preview against staging and repeat from Production against production
 after its separate activation. Using that environment's existing OIDC → STS UI role, sign

@@ -105,7 +105,7 @@ export function StationMap({
   const [status, setStatus] = useState<"loading" | "ready" | "tiles" | "unavailable">("loading");
   const [selectedId, select] = useState(initialStation?.stationId);
   const [showStations, setShowStations] = useState(!!initialStation);
-  const [tracing, setTracing] = useState(!!initialTrace);
+  const [tracing, setTracing] = useState(true);
   const [direction, setDirection] = useState<RiverDirection>(initialTrace?.direction ?? "upstream");
   const [trace, setTrace] = useState<Trace | undefined>(() =>
     initialTrace
@@ -120,6 +120,41 @@ export function StationMap({
     discoveryRequest.current?.abort();
     setTrace(undefined);
   };
+
+  const findMeasurements = useCallback(async (point: TracePoint, upstreamResult: TraceResult) => {
+    discoveryRequest.current?.abort();
+    const controller = new AbortController();
+    discoveryRequest.current = controller;
+    setTrace((current) =>
+      current?.upstream === upstreamResult
+        ? { ...current, discovery: { status: "loading" } }
+        : current,
+    );
+    const query = pointQuery(point);
+    query.set("release", upstreamResult.release.version.slice(0, 16));
+    const update = (discovery: CatchmentDiscovery) => {
+      if (controller.signal.aborted) return;
+      setTrace((current) =>
+        current?.upstream === upstreamResult ? { ...current, discovery } : current,
+      );
+    };
+    try {
+      const response = await fetch(`/api/river/upstream-measurements?${query}`, {
+        signal: controller.signal,
+      });
+      if (response.status === 410) return update({ status: "release-changed" });
+      if (!response.ok) return update({ status: "unavailable" });
+      const { data } = (await response.json()) as { data: PublicUpstreamMeasurements };
+      update(
+        data.release.version === upstreamResult.release.version &&
+          data.release.releaseId === upstreamResult.release.releaseId
+          ? { status: "result", data }
+          : { status: "release-changed" },
+      );
+    } catch {
+      update({ status: "unavailable" });
+    }
+  }, []);
 
   const traceFrom = useCallback(
     async (point: TracePoint, direction: RiverDirection, previous?: Trace) => {
@@ -154,53 +189,28 @@ export function StationMap({
           if (changed) return { point, [direction]: result };
           return { ...current, [direction]: result };
         });
+        if (direction === "upstream" && result && traceCatchment(result)) {
+          void findMeasurements(point, result);
+        }
         return result;
       } catch {
         if (!controller.signal.aborted)
           setTrace((current) => current && { ...current, error: "River trace unavailable" });
       }
     },
-    [],
+    [findMeasurements],
   );
 
-  const findMeasurements = async () => {
-    const upstream = trace?.upstream;
-    if (!trace || !upstream || trace.discovery?.status === "loading") return;
-
-    discoveryRequest.current?.abort();
-    const controller = new AbortController();
-    discoveryRequest.current = controller;
-    setTrace(
-      (current) =>
-        current && {
-          ...current,
-          showCatchment: true,
-          discovery: { status: "loading" },
-        },
-    );
-    const query = pointQuery(trace.point);
-    query.set("release", upstream.release.version.slice(0, 16));
-    const update = (discovery: CatchmentDiscovery) => {
-      if (controller.signal.aborted) return;
-      setTrace((current) => (current?.upstream === upstream ? { ...current, discovery } : current));
-    };
-    try {
-      const response = await fetch(`/api/river/upstream-measurements?${query}`, {
-        signal: controller.signal,
-      });
-      if (response.status === 410) return update({ status: "release-changed" });
-      if (!response.ok) return update({ status: "unavailable" });
-      const { data } = (await response.json()) as { data: PublicUpstreamMeasurements };
-      update(
-        data.release.version === upstream.release.version &&
-          data.release.releaseId === upstream.release.releaseId
-          ? { status: "result", data }
-          : { status: "release-changed" },
-      );
-    } catch {
-      update({ status: "unavailable" });
-    }
-  };
+  const point = trace?.point;
+  const upstreamResult = trace?.upstream;
+  const catchment = useMemo(() => traceCatchment(upstreamResult), [upstreamResult]);
+  const selectPoint = useCallback(
+    (point: TracePoint) => {
+      setDirection("upstream");
+      void traceFrom(point, "upstream");
+    },
+    [traceFrom],
+  );
 
   const discovery = trace?.discovery;
   const matchedStations =
@@ -278,7 +288,7 @@ export function StationMap({
           const { point, direction, showCatchment } = initialTrace;
           const previous = { point, showCatchment };
           void traceFrom(point, direction, previous).then((result) => {
-            if (active && result && direction === "downstream" && showCatchment !== undefined) {
+            if (active && result?.matchStatus === "Matched" && direction === "downstream") {
               void traceFrom(point, "upstream", { ...previous, downstream: result });
             }
           });
@@ -319,22 +329,20 @@ export function StationMap({
     const onClick = ({ originalEvent, lngLat }: MapMouseEvent) => {
       if ((originalEvent.target as Element | null)?.closest(".maplibregl-marker")) return;
       const { lng, lat } = lngLat.wrap();
-      void traceFrom([lng, lat], direction);
+      select(undefined);
+      selectPoint([lng, lat]);
     };
     map.on("click", onClick);
     return () => {
       map.off("click", onClick);
     };
-  }, [map, tracing, direction, unavailable, traceFrom]);
+  }, [map, tracing, unavailable, selectPoint]);
 
-  const point = trace?.point;
   const result = trace?.[direction];
   const provenance = result ?? trace?.upstream ?? trace?.downstream;
   const snapped = trace?.upstream?.snappedSample ?? trace?.downstream?.snappedSample;
-  const upstreamResult = trace?.upstream;
   const upstream = traceGeometry(upstreamResult);
   const downstream = traceGeometry(trace?.downstream);
-  const catchment = useMemo(() => traceCatchment(upstreamResult), [upstreamResult]);
   const showCatchment = trace?.showCatchment !== false;
   const shareCatchment = !!catchment || trace?.showCatchment !== undefined;
   useEffect(() => {
@@ -457,6 +465,7 @@ export function StationMap({
                   <select
                     className="min-h-10 rounded-md border border-line-input bg-surface px-2"
                     value={direction}
+                    disabled={!point || (!trace?.upstream && !trace?.downstream && !trace?.error)}
                     onChange={(event) => {
                       const next = event.target.value as RiverDirection;
                       setDirection(next);
@@ -470,20 +479,21 @@ export function StationMap({
                 <Button
                   onClick={() => {
                     const { lng, lat } = map.getCenter().wrap();
-                    void traceFrom([lng, lat], direction);
+                    select(undefined);
+                    selectPoint([lng, lat]);
                   }}
                 >
-                  Trace map centre
+                  Select map centre
                 </Button>
-                <Button aria-disabled={!point} onClick={clearTrace}>
+                <Button disabled={!point} onClick={clearTrace}>
                   Clear trace
                 </Button>
               </>
             ) : null}
           </div>
-          {tracing ? (
+          {tracing && !point ? (
             <p className="text-sm text-ink-muted">
-              Click the map or select a station to trace from.
+              Select a point on a river to see its catchment.
             </p>
           ) : null}
           {showStations && !stations.some(({ stationId }) => filteredStationIds.has(stationId)) ? (
@@ -627,10 +637,6 @@ export function StationMap({
                       river sample for the selected point.
                     </p>
                   ) : null}
-                  <p>
-                    This boundary shows modelled drainage. Confirming upstream station connections
-                    requires separate river-network evidence.
-                  </p>
                 </div>
               ) : null}
             </>
@@ -639,8 +645,10 @@ export function StationMap({
       ) : null}
       {trace && catchment ? (
         <CatchmentMeasurements
-          discovery={discovery}
-          find={() => void findMeasurements()}
+          discovery={discovery ?? { status: "loading" }}
+          find={() => {
+            if (upstreamResult) void findMeasurements(trace.point, upstreamResult);
+          }}
           refreshTrace={() => {
             setDirection("upstream");
             void traceFrom(trace.point, "upstream");
@@ -668,7 +676,7 @@ export function StationMap({
                   <Link className="link" href={measurementPath(measurement.measurementId)}>
                     {parameterLabel(measurement.parameter)}
                   </Link>
-                  {!tracing || selected.match ? comparisonAction(measurement) : null}
+                  {comparisonAction(measurement)}
                 </li>
               ))}
             </ul>
@@ -686,10 +694,7 @@ export function StationMap({
             {tracing ? (
               <Button
                 onClick={() =>
-                  void traceFrom(
-                    [selected.position.longitude, selected.position.latitude],
-                    direction,
-                  )
+                  selectPoint([selected.position.longitude, selected.position.latitude])
                 }
               >
                 Trace from {selected.name}

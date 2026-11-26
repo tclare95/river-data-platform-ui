@@ -8,6 +8,9 @@
  */
 import { RdpError } from "./errors";
 
+// RDP PublicationRules.MaxPublished (#140).
+export const MAX_PUBLISHED_MEASUREMENTS = 500;
+
 export type Freshness = "fresh" | "stale" | "unknown";
 export type Availability = "available" | "no_observations" | "unavailable";
 export type LabelConvention = "period_end" | "period_start" | "unverified";
@@ -371,7 +374,7 @@ export function parseLocation(row: Json): StationLocation {
 export function parseCatalogue(body: unknown): Catalogue {
   const { data, meta } = envelope(body);
   const seen = new Set<string>();
-  const measurements = array(data, 200).map((item): Measurement => {
+  const measurements = array(data, MAX_PUBLISHED_MEASUREMENTS).map((item): Measurement => {
     const row = object(item);
     const base: MeasurementBase = {
       measurementId: measurementId(row.measurementId),
