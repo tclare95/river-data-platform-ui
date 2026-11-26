@@ -1,4 +1,9 @@
-import { COMPARE_SLOTS, needsMoreCompareAxes, readCompareQuery } from "@/lib/compare";
+import {
+  COMPARE_SLOTS,
+  needsMoreCompareAxes,
+  readCompareQuery,
+  type ComparisonSide,
+} from "@/lib/compare";
 import { loadComparable, loadComparison } from "@/lib/compare-load";
 import { parseRange } from "@/lib/history/range";
 import { isMeasurementId } from "@/lib/rdp/contract";
@@ -38,7 +43,25 @@ export async function GET(request: Request) {
   if (selected.length !== ids.length) return failure(404, "NOT_FOUND");
   if (needsMoreCompareAxes(selected)) return failure(400, "INCOMPATIBLE");
 
-  const body = JSON.stringify({ data: await loadComparison(selected, range) });
-  if (Buffer.byteLength(body) > MAX_RESPONSE_BYTES) return failure(413, "RESULT_TOO_LARGE");
+  const sides = await loadComparison(selected, range);
+  const encoded = sides.map((side, index) => {
+    const json = JSON.stringify(side);
+    return { index, json, bytes: Buffer.byteLength(json) };
+  });
+  // Include the envelope and separators in the budget. Keep complete smaller series if the response would overflow.
+  let bytes = Buffer.byteLength('{"data":[]}') + encoded.length - 1;
+  for (const side of encoded) bytes += side.bytes;
+  if (bytes > MAX_RESPONSE_BYTES) {
+    for (const entry of [...encoded].sort((a, b) => b.bytes - a.bytes)) {
+      const { measurement, result } = sides[entry.index];
+      if (result.status !== "ok") continue;
+      const replacement: ComparisonSide = { measurement, result: { status: "too_large" } };
+      entry.json = JSON.stringify(replacement);
+      bytes += Buffer.byteLength(entry.json) - entry.bytes;
+      if (bytes <= MAX_RESPONSE_BYTES) break;
+    }
+  }
+  if (bytes > MAX_RESPONSE_BYTES) return failure(413, "RESULT_TOO_LARGE");
+  const body = `{"data":[${encoded.map(({ json }) => json).join(",")}]}`;
   return new Response(body, { headers: { ...headers, "Content-Type": "application/json" } });
 }
