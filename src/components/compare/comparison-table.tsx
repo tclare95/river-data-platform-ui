@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { Button } from "@/components/button";
+import { RainfallTotalValue } from "@/components/history/rainfall-totals";
 import { Time } from "@/components/latest-reading";
 import type { AlignedRow, ComparisonReading } from "@/lib/compare";
 import { INELIGIBLE_REASON, rainfallBounds } from "@/lib/history/rainfall";
@@ -11,6 +12,7 @@ export const COMPARE_ROWS_PER_PAGE = 100;
 type ComparisonColumn = { id: string; label: string; unit: string; rainfall: boolean };
 
 export function ComparisonValue({ reading, unit }: { reading: ComparisonReading; unit?: string }) {
+  if ("expected" in reading) return <RainfallTotalValue total={reading} showWindow />;
   const rain = "label" in reading ? reading : null;
   const value = "value" in reading ? reading.value : reading.totalMm;
   const period = rain && rainfallBounds(rain);
@@ -56,9 +58,11 @@ function Cell({ reading }: { reading: ComparisonReading | null }) {
 export function ComparisonTable({
   rows,
   columns,
+  name = "Compared readings",
 }: {
   rows: readonly AlignedRow[];
   columns: readonly ComparisonColumn[];
+  name?: string;
 }) {
   const [page, setPage] = useState(0);
   const statusId = useId();
@@ -77,17 +81,17 @@ export function ComparisonTable({
       {/* Focusable so keyboard users can scroll a table wider than a narrow screen (WCAG 2.1.1). */}
       <div
         role="region"
-        aria-label="Compared readings"
+        aria-label={name}
         tabIndex={0}
         className="overflow-x-auto rounded-lg border border-line bg-surface"
       >
         <table className="w-full text-left text-sm tabular-nums">
-          <caption className="sr-only">Compared readings, newest first. Times are UK time.</caption>
+          <caption className="sr-only">{name}, newest first. Timeline times are UK time.</caption>
           <thead className="border-b border-line text-ink-muted">
             <tr>
               <th scope="col" className="px-4 py-2.5 font-medium">
                 {columns.some(({ rainfall }) => rainfall)
-                  ? "Observation time or rainfall label"
+                  ? "Observation time or rainfall window end / label"
                   : "Observed"}
               </th>
               {columns.map(({ id, label, unit }) => (

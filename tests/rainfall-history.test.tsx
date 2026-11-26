@@ -68,6 +68,7 @@ const history: History = {
 
 it("uses physical bounds for bars and only the label for unverified timing", async () => {
   render(<RainfallHistory history={history} span="7 days" />);
+  await userEvent.selectOptions(screen.getByRole("combobox", { name: "Rainfall view" }), "native");
   const chart = screen.getByRole("img", { name: /1 missing · 1 ineligible/ });
   const bar = within(chart).getByText(/19 Nov, 23:45 to 20 Nov, 00:00 · 0\.0125 mm/).parentElement!;
   expect(bar.tagName).toBe("rect");

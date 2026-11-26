@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   CartesianGrid,
   ComposedChart,
@@ -10,8 +10,16 @@ import {
   useXAxisScale,
   useYAxisScale,
 } from "recharts";
+import { ComparisonTable } from "@/components/compare/comparison-table";
+import { alignReadings } from "@/lib/compare";
 import { Button } from "@/components/button";
 import { timeTicks } from "@/components/history/history-chart";
+import {
+  RainfallModeControl,
+  RainfallTotalsNote,
+  RainfallTotalsPlot,
+  RainfallTotalValue,
+} from "@/components/history/rainfall-totals";
 import { ROWS_PER_PAGE } from "@/components/history/observation-table";
 import { Time } from "@/components/latest-reading";
 import { EmptyState } from "@/components/states";
@@ -20,9 +28,17 @@ import {
   INELIGIBLE_REASON,
   missingLabels,
   rainfallBounds,
+  visibleRainfallIntervals,
   type RainfallInterval as Interval,
   type RainfallResult as History,
 } from "@/lib/history/rainfall";
+import {
+  RAINFALL_MODES,
+  rainfallSummaries,
+  rainfallTotals,
+  type RainfallMode,
+  type RainfallTotal,
+} from "@/lib/history/rainfall-totals";
 import { qualityLabel } from "@/lib/labels";
 import { epochMs, tickKey } from "@/lib/rdp/contract";
 
@@ -110,12 +126,25 @@ export function RainfallBars({
   });
 }
 
-function RainfallChart({ history, summary }: { history: History; summary: string }) {
-  const { from, to, intervals, periodSeconds } = history;
+function RainfallChart({
+  history,
+  intervals,
+  totals,
+  mode,
+  summary,
+}: {
+  history: History;
+  intervals: History["intervals"];
+  totals: RainfallTotal[];
+  mode: RainfallMode;
+  summary: string;
+}) {
+  const { from, to, periodSeconds } = history;
+  const data: readonly (Interval | RainfallTotal)[] = mode === "native" ? intervals : totals;
   // A selected label can represent an interval that straddles the label window. Keep the full bar.
   let start = epochMs(from);
   let end = epochMs(to);
-  let max = 0;
+  let max = totals.reduce((max, point) => Math.max(max, point.totalMm ?? 0), 0);
   for (const row of intervals) {
     const period = rainfallBounds(row);
     if (period) {
@@ -131,18 +160,21 @@ function RainfallChart({ history, summary }: { history: History; summary: string
   return (
     <figure>
       <figcaption className="mb-2 text-xs text-ink-muted">
-        Rainfall per {formatPeriod(periodSeconds)} (mm)
+        {mode === "native" ? `Rainfall per ${formatPeriod(periodSeconds)}` : RAINFALL_MODES[mode]}{" "}
+        (mm)
       </figcaption>
       <div role="img" aria-label={summary} className="h-64 w-full sm:h-80">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
-            data={intervals}
+            data={data}
             margin={{ top: 8, right: 12, bottom: 0, left: 0 }}
             accessibilityLayer={false}
           >
             <CartesianGrid vertical={false} stroke="var(--color-line)" />
             <XAxis
-              dataKey={(row: Interval) => epochMs(row.label)}
+              dataKey={(row: Interval | RainfallTotal) =>
+                epochMs("label" in row ? row.label : row.to)
+              }
               type="number"
               scale="linear"
               domain={[start, end]}
@@ -164,15 +196,23 @@ function RainfallChart({ history, summary }: { history: History; summary: string
               tickLine={false}
               axisLine={false}
             />
-            <RainfallBars intervals={intervals} />
+            {mode === "native" ? (
+              <RainfallBars intervals={intervals} />
+            ) : (
+              <RainfallTotalsPlot totals={totals} mode={mode} />
+            )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <p className="text-sm text-ink-muted">
-        Baseline marks show 0 mm. Gaps indicate missing readings.
-        {ineligible ? " Crosses mark ineligible readings." : ""}
-        {unverified ? " Grey marks use provider labels where interval timing is unverified." : ""}
-      </p>
+      {mode === "native" ? (
+        <p className="text-sm text-ink-muted">
+          Baseline marks show 0 mm. Gaps indicate missing readings.
+          {ineligible ? " Crosses mark ineligible readings." : ""}
+          {unverified ? " Grey marks use provider labels where interval timing is unverified." : ""}
+        </p>
+      ) : (
+        <RainfallTotalsNote mode={mode} totals={totals} />
+      )}
     </figure>
   );
 }
@@ -303,31 +343,78 @@ function RainfallTable({
 }
 
 export function RainfallHistory({ history, span }: { history: History; span: string }) {
-  const { intervals, window } = history;
-  const gaps = missingLabels(history);
+  const [mode, setMode] = useState<RainfallMode>("daily");
+  const summaries = useMemo(() => rainfallSummaries(history), [history]);
+  const totals = useMemo(
+    () => (mode === "native" ? [] : rainfallTotals(history, mode)),
+    [history, mode],
+  );
+  const rows = useMemo(() => alignReadings([totals]), [totals]);
+  const intervals = useMemo(() => visibleRainfallIntervals(history), [history]);
+  const gaps = useMemo(() => missingLabels(history), [history]);
   const absent = gaps.reduce((count, gap) => count + gap.count, 0);
   const ineligible = intervals.filter((row) => row.totalMm === null).length;
   const counts = `${absent.toLocaleString("en-GB")} missing · ${ineligible.toLocaleString("en-GB")} ineligible`;
-  const total = window?.status === "complete" ? window.totalMm : null;
 
   return (
     <>
-      {intervals.length ? (
+      <div>
+        <h3 className="font-semibold">Recent rainfall</h3>
+        <p className="mt-1 text-sm text-ink-muted">
+          Windows ending <Time value={history.to} />
+        </p>
+        <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {summaries.map((total) => (
+            <div key={total.label} className="rounded-lg border border-line bg-surface p-3">
+              <dt className="text-sm font-medium">{total.label}</dt>
+              <dd className="mt-1 text-sm tabular-nums [&>span:first-child]:text-lg [&>span:first-child]:font-semibold">
+                <RainfallTotalValue total={total} />
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {summaries.some((total) => total.basis === "indicative") ? (
+          <p className="mt-2 text-sm text-ink-muted">
+            Indicative totals group provider labels where interval timing is unverified.
+          </p>
+        ) : null}
+      </div>
+
+      <RainfallModeControl mode={mode} onChange={setMode} />
+      {(mode === "native" ? intervals.length : totals.some((total) => total.used)) ? (
         <RainfallChart
           history={history}
-          summary={`Rainfall interval totals in mm, last ${span}. ${counts}. Every reading is in the Readings table below.`}
+          intervals={mode === "native" ? intervals : []}
+          totals={totals}
+          mode={mode}
+          summary={
+            mode === "native"
+              ? `Rainfall interval totals in mm, last ${span}. ${counts}. Every reading is in the Readings table below.`
+              : `Rainfall ${RAINFALL_MODES[mode].toLowerCase()} in mm, last ${span}. Coverage is in the Totals table below.`
+          }
         />
       ) : (
-        <EmptyState title={`No readings in the last ${span}`} />
+        <EmptyState
+          title={
+            mode === "native"
+              ? `No readings in the last ${span}`
+              : "Rainfall totals unavailable for this view"
+          }
+        />
       )}
-      <p className="text-sm text-ink-muted">
-        {counts}.
-        {total != null
-          ? ` Total across the selected labels: ${String(total)} mm.`
-          : " No verified total for this range."}
-      </p>
+      {mode !== "native" ? (
+        <details>
+          <summary className="cursor-pointer py-2 font-medium text-accent">Totals table</summary>
+          <ComparisonTable
+            key={mode}
+            name="Rainfall totals"
+            rows={rows}
+            columns={[{ id: "rainfall", label: "Rainfall", unit: "mm", rainfall: true }]}
+          />
+        </details>
+      ) : null}
       {intervals.length ? (
-        <details className="group">
+        <details>
           <summary className="cursor-pointer py-2 font-medium text-accent">
             Readings table ({intervals.length.toLocaleString("en-GB")})
           </summary>

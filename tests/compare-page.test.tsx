@@ -127,15 +127,15 @@ describe("compare page", () => {
     const legend = screen.getByRole("list", { name: "Chart legend" });
     expect(within(legend).getAllByRole("listitem")).toHaveLength(4);
     expect(within(legend).getAllByText(/Left axis · mAOD/)).toHaveLength(3);
-    expect(within(legend).getByText(/Right axis.*mm per 15 minutes/)).toBeVisible();
+    expect(within(legend).getByText(/Right axis.*mm · Rolling 24-hour total/)).toBeVisible();
     const styles = [...legend.querySelectorAll("line")].map((line) =>
       line.getAttribute("stroke-dasharray"),
     );
-    expect(new Set(styles).size).toBe(3);
+    expect(new Set(styles).size).toBe(4);
     const chart = screen.getByRole("group", { name: /^Shared timeline/ });
     expect(chart.querySelectorAll(".recharts-yAxis")).toHaveLength(2);
     expect(chart.querySelectorAll(".recharts-xAxis")).toHaveLength(1);
-    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Add a measurement" })).toBeNull();
     expect(screen.getByRole("link", { name: /^Remove Stone/ })).toHaveAttribute(
       "href",
       "/compare?a=ea-colwick-level&b=ea-clifton-bridge-level&c=ea-church-wilne-level&range=7d",
@@ -157,10 +157,11 @@ describe("compare page", () => {
         .map((id) => `/v1/measurements/${id}/observations`)
         .sort(),
     );
-    for (const { query } of reads) {
+    for (const { path, query } of reads) {
+      const rain = path.includes("rainfall");
       expect(query).toMatchObject({
-        from: "2026-11-12T12:00:00.000Z",
-        to: "2026-11-19T12:00:00.000Z",
+        from: rain ? "2026-11-05T12:00:00.000Z" : "2026-11-12T12:00:00.000Z",
+        to: rain ? "2026-11-19T12:00:00.001Z" : "2026-11-19T12:00:00.000Z",
         limit: "2000",
       });
     }
@@ -287,7 +288,12 @@ describe("compare page", () => {
       "href",
       "/?a=ea-colwick-level&b=ea-stone-rainfall",
     );
+    const view = screen.getByRole("combobox", { name: "Rainfall view" });
+    expect(view).toHaveDisplayValue("Rolling 24-hour total");
     const chart = screen.getByRole("group", { name: /^Shared timeline/ });
+    expect(chart).toHaveAccessibleName(/Left axis · mASD.*Right axis · mm · Rolling 24-hour total/);
+    expect(chart).toHaveTextContent(/Partial · Indicative · 3\/96 expected labels/);
+    await userEvent.selectOptions(view, "native");
     expect(chart).toHaveAccessibleName(/Left axis · mASD.*Right axis · mm per 15 minutes/);
     const bar = within(chart).getByText(/18 Nov, 11:45 to 18 Nov, 12:00 · 1.25 mm/).parentElement!;
     expect(bar.tagName).toBe("rect");

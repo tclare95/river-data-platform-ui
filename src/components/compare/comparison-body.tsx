@@ -1,12 +1,17 @@
+"use client";
+
+import { useMemo, useState } from "react";
 import { ComparisonTable } from "@/components/compare/comparison-table";
 import { ComparisonChart } from "@/components/compare/comparison-chart";
 import { Announce } from "@/components/history/announce";
+import { RainfallModeControl, RainfallTotalsNote } from "@/components/history/rainfall-totals";
 import { CoverageNote } from "@/components/history/history-controls";
 import { Time } from "@/components/latest-reading";
 import { EmptyState, ErrorState } from "@/components/states";
 import { alignReadings, comparisonReadings, type ComparisonSide } from "@/lib/compare";
 import { HISTORY_RANGES, type HistoryRange } from "@/lib/history/range";
-import { missingLabels, rainfallBounds } from "@/lib/history/rainfall";
+import { missingLabels, rainfallBounds, visibleRainfallIntervals } from "@/lib/history/rainfall";
+import { rainfallTotals, type RainfallMode } from "@/lib/history/rainfall-totals";
 import { parameterLabel } from "@/lib/labels";
 import type { PublicMeasurement } from "@/lib/rdp/public";
 
@@ -14,7 +19,15 @@ function title(measurement: PublicMeasurement) {
   return `${measurement.name} ${parameterLabel(measurement.parameter).toLowerCase()}`;
 }
 
-function SeriesStatus({ side, span }: { side: ComparisonSide; span: string }) {
+function SeriesStatus({
+  side,
+  span,
+  mode,
+}: {
+  side: ComparisonSide;
+  span: string;
+  mode: RainfallMode;
+}) {
   const { measurement, result } = side;
   const label = title(measurement);
   if (result.status === "unavailable") {
@@ -30,6 +43,7 @@ function SeriesStatus({ side, span }: { side: ComparisonSide; span: string }) {
   if (result.status === "deferred") {
     return <EmptyState title={`${label}: history isn’t charted yet`} />;
   }
+  if ("intervals" in result && mode !== "native") return null;
   if (comparisonReadings(result).length === 0) {
     return (
       <EmptyState title={`${label}: no readings in the last ${span}`}>
@@ -40,8 +54,9 @@ function SeriesStatus({ side, span }: { side: ComparisonSide; span: string }) {
   if (!("intervals" in result)) return null;
 
   const missing = missingLabels(result).reduce((sum, gap) => sum + gap.count, 0);
-  const ineligible = result.intervals.filter((row) => !row.eligible).length;
-  const unverified = result.intervals.filter((row) => row.eligible && !rainfallBounds(row)).length;
+  const intervals = visibleRainfallIntervals(result);
+  const ineligible = intervals.filter((row) => !row.eligible).length;
+  const unverified = intervals.filter((row) => row.eligible && !rainfallBounds(row)).length;
   const notes = [
     missing && `${missing.toLocaleString("en-GB")} missing`,
     ineligible && `${ineligible.toLocaleString("en-GB")} ineligible (×)`,
@@ -64,7 +79,19 @@ export function ComparisonBody({
   statusId: string;
 }) {
   const span = HISTORY_RANGES[range].label;
-  const rows = alignReadings(sides.map(({ result }) => comparisonReadings(result)));
+  const hasRainfall = sides.some(({ result }) => result.status === "ok" && "intervals" in result);
+  const [mode, setMode] = useState<RainfallMode>("24h");
+  const series = useMemo(
+    () =>
+      sides.map(({ result }) =>
+        mode !== "native" && result.status === "ok" && "intervals" in result
+          ? rainfallTotals(result, mode)
+          : comparisonReadings(result),
+      ),
+    [sides, mode],
+  );
+  const rows = useMemo(() => alignReadings(series), [series]);
+  const totals = series.flatMap((readings) => readings.filter((reading) => "expected" in reading));
   const columns = sides.map(({ measurement }) => ({
     id: measurement.measurementId,
     label: title(measurement),
@@ -75,9 +102,13 @@ export function ComparisonBody({
   return (
     <div className="space-y-4">
       <Announce targetId={statusId} text={`Showing ${span} for ${sides.length} measurements`} />
-      {rows.length > 0 ? <ComparisonChart sides={sides} rows={rows} /> : null}
+      {hasRainfall ? <RainfallModeControl mode={mode} onChange={setMode} /> : null}
+      {rows.length > 0 ? (
+        <ComparisonChart sides={sides} rows={rows} readings={series} mode={mode} />
+      ) : null}
+      <RainfallTotalsNote mode={mode} totals={totals} />
       {sides.map((side) => (
-        <SeriesStatus key={side.measurement.measurementId} side={side} span={span} />
+        <SeriesStatus key={side.measurement.measurementId} side={side} span={span} mode={mode} />
       ))}
       {rows.length > 0 ? (
         <>
@@ -86,7 +117,7 @@ export function ComparisonBody({
               Compared readings table ({rows.length.toLocaleString("en-GB")} times)
             </summary>
             <div className="mt-3">
-              <ComparisonTable rows={rows} columns={columns} />
+              <ComparisonTable key={mode} rows={rows} columns={columns} />
             </div>
           </details>
           <details>
@@ -94,8 +125,8 @@ export function ComparisonBody({
               Coverage
             </summary>
             <div className="space-y-3">
-              {sides.map(({ measurement, result }) =>
-                result.status === "ok" && comparisonReadings(result).length > 0 ? (
+              {sides.map(({ measurement, result }, index) =>
+                result.status === "ok" && series[index].length > 0 ? (
                   <div key={measurement.measurementId}>
                     <p className="text-sm font-medium">{title(measurement)}</p>
                     <CoverageNote coverage={result.coverage} />

@@ -6,8 +6,9 @@ import { ObservationTable } from "@/components/history/observation-table";
 import { RainfallHistory } from "@/components/history/rainfall-history";
 import { Time } from "@/components/latest-reading";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
-import { loadHistory, type HistoryResult } from "@/lib/history/load";
+import { loadChartHistory, type HistoryResult } from "@/lib/history/load";
 import { HISTORY_RANGES, rangeWindow, type HistoryRange } from "@/lib/history/range";
+import { visibleRainfallIntervals } from "@/lib/history/rainfall";
 import { buildSeries } from "@/lib/history/series";
 import { measurementPath, parameterLabel } from "@/lib/labels";
 import type { PublicMeasurement } from "@/lib/rdp/public";
@@ -54,7 +55,7 @@ function HistoryBody({
         <Announce
           targetId={STATUS_ID}
           text={
-            result.intervals.length
+            visibleRainfallIntervals(result).length
               ? `Showing ${span} of rainfall history`
               : `No readings in the last ${span}`
           }
@@ -143,7 +144,7 @@ function LoadedHistory({
 /** Never rejects: configuration and transport failures are the `unavailable` state. */
 async function readHistory(measurement: PublicMeasurement, range: HistoryRange) {
   try {
-    return await loadHistory(
+    return await loadChartHistory(
       getRdpClient(),
       measurement.measurementId,
       measurement.kind,

@@ -13,6 +13,14 @@ The authoritative requirements live in RDP's [River Explorer OpenSpec](https://g
 - History: initially a bounded week/month window; preserve gaps, source times and coverage uncertainty. Do not interpolate missing readings.
 - Attribution: source and original measurement provenance remain visible without distracting from the data.
 
+## Rainfall
+
+Rainfall station pages open with accumulated depths for the previous 24, 48 and 72 hours and 7 days, ending at the latest whole UTC hour. The history chart opens on daily totals. Both the explorer comparison and the full comparison open on a rolling 24-hour total for each selected rainfall gauge.
+
+The rainfall view selector offers native interval, hourly and daily totals, rolling 6-, 12-, 24-, 48- and 72-hour and 7-day totals, and cumulative depth since the selected chart start. Every view uses millimetres of rainfall. Daily buckets start at midnight UTC, including when UK clocks change.
+
+Totals show how many expected intervals or provider labels contributed. Partial totals show the sum of the eligible readings available, and windows with no usable readings are unavailable. Reported zero remains an observation. Indicative sums group UTC provider labels when the exact interval timing is unverified. Each gauge retains its own series and totals.
+
 ## Design direction
 
 - **Simple, clean and calm.** Clear typography and generous but purposeful spacing; restrained river-green/slate palette.

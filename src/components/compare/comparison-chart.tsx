@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { ComparisonValue } from "@/components/compare/comparison-table";
 import { IsolatedDot, timeTicks, valueAxis } from "@/components/history/history-chart";
+import { RainfallTotalsPlot } from "@/components/history/rainfall-totals";
 import { RainfallBars } from "@/components/history/rainfall-history";
 import { Time } from "@/components/latest-reading";
 import {
@@ -21,9 +22,11 @@ import {
   comparisonInspectionRows,
   type AlignedRow,
   type ComparisonSide,
+  type ComparisonReading,
 } from "@/lib/compare";
 import { formatPeriod } from "@/lib/format";
 import { rainfallBounds } from "@/lib/history/rainfall";
+import { RAINFALL_MODES, type RainfallMode } from "@/lib/history/rainfall-totals";
 import { buildSeries } from "@/lib/history/series";
 import { datumSummary, measurementPath, parameterLabel } from "@/lib/labels";
 import { epochMs, tickKey } from "@/lib/rdp/contract";
@@ -42,24 +45,42 @@ const inspectionTime = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit",
   minute: "2-digit",
   second: "2-digit",
+  timeZoneName: "short",
 });
 
-export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows: AlignedRow[] }) {
+export function ComparisonChart({
+  sides,
+  rows,
+  readings,
+  mode,
+}: {
+  sides: ComparisonSide[];
+  rows: AlignedRow[];
+  readings: readonly (readonly ComparisonReading[])[];
+  mode: RainfallMode;
+}) {
   const patternId = useId();
   const data = useMemo(() => comparisonInspectionRows(rows), [rows]);
   const series = sides.flatMap(({ measurement, result }, index) => {
     if (result.status !== "ok") return [];
-    const intervals = "intervals" in result ? result.intervals : null;
+    const rainfall = "intervals" in result;
+    const intervals = readings[index].filter((row) => "label" in row);
+    const totals = readings[index].filter((row) => "expected" in row);
     const observations = "observations" in result ? result.observations : null;
-    if (!intervals?.length && !observations?.length) return [];
+    if (!readings[index].length) return [];
     const gaps = result.coverage.gaps.filter((gap) => gap.reason !== "unknown");
     const line =
       observations && buildSeries(observations, measurement.expectedIntervalSeconds, gaps);
-    const max = intervals?.reduce((max, row) => Math.max(max, row.totalMm ?? 0), 0);
+    const max = readings[index].reduce(
+      (max, row) => Math.max(max, "totalMm" in row ? (row.totalMm ?? 0) : 0),
+      0,
+    );
     const label = `${measurement.name} ${parameterLabel(measurement.parameter).toLowerCase()}`;
     const unit =
       "periodSeconds" in result
-        ? `${measurement.unit} per ${formatPeriod(result.periodSeconds)}`
+        ? mode === "native"
+          ? `${measurement.unit} per ${formatPeriod(result.periodSeconds)}`
+          : `${measurement.unit} · ${RAINFALL_MODES[mode]}`
         : measurement.unit;
 
     return [
@@ -68,13 +89,15 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
         measurement,
         result,
         gaps,
+        rainfall,
         intervals,
+        totals,
         line,
         label,
         unit,
         ...STYLES[index],
         min: line?.min ?? 0,
-        max: line?.max ?? max ?? 0,
+        max: line?.max ?? max,
       },
     ];
   });
@@ -83,7 +106,7 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
   let start = epochMs(series[0].result.from);
   let end = epochMs(series[0].result.to);
   for (const { intervals } of series) {
-    for (const row of intervals ?? []) {
+    for (const row of intervals) {
       const period = rainfallBounds(row);
       if (period) {
         start = Math.min(start, epochMs(period[0]));
@@ -93,13 +116,17 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
   }
   const x = timeTicks(start, end);
   const axisSide = (axis: number) => (dual ? (axis === 0 ? "Left axis" : "Right axis") : "Y axis");
-  const firstRain = series.find((item) => item.intervals);
+  const rainfallBars = mode === "native" || mode === "hourly" || mode === "daily";
+  const firstRain = series.find((item) => item.rainfall);
   const legend = series.map((item) => {
     const axisId = axes.findIndex((group) => group.includes(item));
     const datum = datumSummary(item.measurement);
     const axis = [axisSide(axisId), item.unit, datum].filter(Boolean).join(" · ");
     // Transparent hatching keeps overlapping interval bars at their actual bounds.
-    const pattern = item.intervals && item !== firstRain ? `${patternId}-${item.index}` : undefined;
+    const pattern =
+      item.rainfall && item !== firstRain && rainfallBars
+        ? `${patternId}-${item.index}`
+        : undefined;
     return { ...item, axisId, axis, pattern };
   });
 
@@ -128,10 +155,10 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
           aria-label="Chart legend"
           className="flex flex-wrap justify-between gap-x-5 gap-y-2 px-2 pb-2"
         >
-          {legend.map(({ measurement, color, dash, intervals, label, axis, pattern }) => (
+          {legend.map(({ measurement, color, dash, rainfall, label, axis, pattern }) => (
             <li key={measurement.measurementId} className="flex items-start gap-2 text-sm">
               <svg aria-hidden="true" className="mt-1 shrink-0" width="20" height="12">
-                {intervals ? (
+                {rainfall && rainfallBars ? (
                   <rect
                     x="4"
                     y="1"
@@ -208,7 +235,7 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
             {axes.map((items, axis) => {
               const min = Math.min(...items.map((item) => item.min));
               const max = Math.max(...items.map((item) => item.max));
-              const rainfall = items[0].intervals !== null;
+              const rainfall = items[0].rainfall;
               const values = rainfall
                 ? { domain: [0, max || 1], ticks: undefined }
                 : valueAxis(min, max);
@@ -249,8 +276,8 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
                 />
               )),
             )}
-            {legend.map(({ index, color, dash, intervals, axisId, pattern }) =>
-              intervals ? (
+            {legend.map(({ index, color, dash, intervals, totals, axisId, pattern }) =>
+              intervals.length ? (
                 <RainfallBars
                   key={index}
                   intervals={intervals}
@@ -259,6 +286,16 @@ export function ComparisonChart({ sides, rows }: { sides: ComparisonSide[]; rows
                   fill={pattern ? `url(#${pattern})` : color}
                   dash={dash}
                   opacity={0.55}
+                />
+              ) : totals.length ? (
+                <RainfallTotalsPlot
+                  key={index}
+                  totals={totals}
+                  mode={mode}
+                  yAxisId={axisId}
+                  color={color}
+                  dash={dash}
+                  fill={pattern ? `url(#${pattern})` : color}
                 />
               ) : null,
             )}
