@@ -1854,13 +1854,15 @@ describe("measurement explorer", () => {
       await armTrace();
       mapClick(screen.getByRole("region", { name: "River map" }));
       expect(await screen.findByText(label)).toBeInTheDocument();
-      expect(currentTraceData()?.features).toEqual([
-        {
-          type: "Feature",
-          properties: { kind: "selected" },
-          geometry: { type: "Point", coordinates: [-1.25, 52.5] },
-        },
-      ]);
+      await waitFor(() =>
+        expect(currentTraceData()?.features).toEqual([
+          {
+            type: "Feature",
+            properties: { kind: "selected" },
+            geometry: { type: "Point", coordinates: [-1.25, 52.5] },
+          },
+        ]),
+      );
     },
   );
 
