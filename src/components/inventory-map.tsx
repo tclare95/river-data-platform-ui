@@ -78,6 +78,7 @@ export function useInventoryMarkers(
   onSelect: (station: InventoryStation) => void,
   onBrowse: () => void,
   detailsId: string,
+  selectedKey: string | undefined,
 ) {
   useEffect(() => {
     if (!renderer || !stations.length) return;
@@ -86,7 +87,8 @@ export function useInventoryMarkers(
     for (const station of stations) {
       const { longitude, latitude } = station.position;
       const { x, y } = map.project([longitude, latitude]);
-      const cell = `${Math.floor(x / 52)}:${Math.floor(y / 52)}`;
+      const cell =
+        station.key === selectedKey ? "selected" : `${Math.floor(x / 52)}:${Math.floor(y / 52)}`;
       const group = cells.get(cell);
       if (group) group.push(station);
       else cells.set(cell, [station]);
@@ -96,7 +98,12 @@ export function useInventoryMarkers(
       const { longitude, latitude } = station.position;
       const point: [number, number] = [longitude, latitude];
       if (group.length === 1) {
-        const button = stationMarkerButton(station.name, station.marker);
+        const button = stationMarkerButton(
+          station.name,
+          station.marker,
+          false,
+          station.key === selectedKey,
+        );
         button.setAttribute("aria-controls", detailsId);
         button.onclick = () => onSelect(station);
         return new library.Marker({ element: button }).setLngLat(point).addTo(map);
@@ -117,7 +124,7 @@ export function useInventoryMarkers(
       return new library.Marker({ element: button }).setLngLat(point).addTo(map);
     });
     return () => markers.forEach((marker) => marker.remove());
-  }, [renderer, stations, onSelect, onBrowse, detailsId]);
+  }, [renderer, stations, onSelect, onBrowse, detailsId, selectedKey]);
 }
 
 const freshnessLabels = {

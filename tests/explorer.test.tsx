@@ -392,7 +392,9 @@ describe("measurement explorer", () => {
       "Second rain gauge",
     );
     expect(screen.getByRole("heading", { name: "Second rain gauge" })).toHaveFocus();
-    expect(screen.getByText("Rainfall", { selector: "span" })).toBeVisible();
+    expect(
+      within(screen.getByRole("region", { name: "Second rain gauge" })).getByText("Rainfall"),
+    ).toBeVisible();
     expect(screen.getByText("No data published by RDP")).toBeVisible();
     await user.click(
       screen.getByRole("button", {
@@ -582,7 +584,7 @@ describe("measurement explorer", () => {
       details.getByRole("link", { name: "Environment Agency station record" }),
     ).toHaveAttribute("href", "https://environment.data.gov.uk/flood-monitoring/id/stations/4007");
     await user.tab();
-    expect(details.getByRole("link", { name: "Water level" })).toHaveFocus();
+    expect(details.getByRole("button", { name: "Collapse" })).toHaveFocus();
 
     await user.click(screen.getByRole("radio", { name: "Flow" }));
     expect(map.getByRole("button", { name: /^Shardlow ·/ })).toBeInTheDocument();
@@ -607,6 +609,102 @@ describe("measurement explorer", () => {
     expect(details.getByRole("heading", { name: "Shardlow" })).toBeInTheDocument();
     expect(mapMock.create).toHaveBeenCalledTimes(1);
     expect(mapMock.fitBounds).not.toHaveBeenCalled();
+  });
+
+  it("opens a desktop station panel at the map and ignores the previous station's pending summary", async () => {
+    addPublishedPositions();
+    vi.stubGlobal("innerWidth", 1280);
+    const user = userEvent.setup();
+    let completeSummary!: (response: Response) => void;
+    const request = vi.fn<typeof fetch>().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          completeSummary = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", request);
+    render(<MeasurementExplorer items={items} />);
+    await enableStations(user);
+    const mapRegion = screen.getByRole("region", { name: "River map" });
+    const map = within(mapRegion);
+
+    await user.click(map.getByRole("button", { name: /^Shardlow ·/ }));
+    expect(map.getByRole("button", { name: /^Shardlow ·/, pressed: true })).toBeVisible();
+    const panel = screen.getByRole("region", { name: "Shardlow" });
+    expect(panel.parentElement?.parentElement).toBe(mapRegion.parentElement);
+    expect(within(panel).getByText("River Trent")).toBeVisible();
+    expect(within(panel).getAllByText("Recent").length).toBeGreaterThan(0);
+    expect(panel.querySelector("time")).toBeVisible();
+    expect(request).not.toHaveBeenCalled();
+
+    await user.click(within(panel).getByLabelText("Recent observations for Shardlow flow"));
+    expect(request).toHaveBeenCalledTimes(1);
+    const signal = request.mock.calls[0][1]?.signal;
+
+    await user.click(map.getByRole("button", { name: /^Kegworth ·/ }));
+    expect(signal?.aborted).toBe(true);
+    expect(map.getByRole("button", { name: /^Kegworth ·/, pressed: true })).toBeVisible();
+    expect(map.getByRole("button", { name: /^Shardlow ·/, pressed: false })).toBeVisible();
+    await act(async () =>
+      completeSummary(Response.json({ latest: null, summary: { status: "not_recent" } })),
+    );
+    expect(screen.getByRole("region", { name: "Kegworth" })).toBe(panel);
+    const nextPanel = within(panel);
+    expect(nextPanel.getByText("River Soar")).toBeVisible();
+    expect(nextPanel.getByRole("link", { name: "Water level" })).toHaveAttribute(
+      "href",
+      "/measurements/ea-kegworth-level",
+    );
+    expect(screen.queryByRole("region", { name: "Shardlow" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Recent changes unavailable")).not.toBeInTheDocument();
+
+    await user.click(
+      nextPanel.getByRole("button", { name: /^Add to comparison: Kegworth · Water level/ }),
+    );
+    expect(screen.getByRole("region", { name: "Comparison selection" })).toHaveTextContent(
+      "1 of 4 selected",
+    );
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("region", { name: "Kegworth" })).not.toBeInTheDocument();
+    expect(mapRegion).toHaveFocus();
+    expect(map.getByRole("button", { name: /^Kegworth ·/, pressed: false })).toBeVisible();
+    expect(mapMock.create).toHaveBeenCalledTimes(1);
+    expect(mapMock.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("lets mobile users collapse, expand and dismiss a discoverable station at the map", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(inventoryResponse([providerStation("Rain Lane", -1.3)])),
+    );
+    render(<MeasurementExplorer items={items} />);
+    await screen.findByRole("button", { name: "Trace river" });
+    moveArea([-1.5, 52.5, -1, 53]);
+    const mapRegion = screen.getByRole("region", { name: "River map" });
+    const map = within(mapRegion);
+    const marker = { name: "Rain Lane · Rainfall · Discoverable only" };
+    await user.pointer({ keys: "[TouchA]", target: await map.findByRole("button", marker) });
+    const panel = within(screen.getByRole("region", { name: "Rain Lane" }));
+    expect(panel.getByRole("heading")).toHaveFocus();
+    expect(panel.getByText("Observations are currently unavailable in RDP.")).toBeVisible();
+    expect(panel.getByText("Rainfall")).toBeVisible();
+    expect(panel.queryByRole("link")).not.toBeInTheDocument();
+    expect(map.getByRole("button", { ...marker, pressed: true })).toBeVisible();
+
+    await user.click(panel.getByRole("button", { name: "Collapse", expanded: true }));
+    expect(panel.getByRole("heading")).toBeVisible();
+    expect(panel.getByText("Rainfall")).not.toBeVisible();
+    await user.click(panel.getByRole("button", { name: "Expand", expanded: false }));
+    expect(panel.getByText("Rainfall")).toBeVisible();
+
+    await user.click(panel.getByRole("button", { name: "Close station details" }));
+    expect(screen.queryByRole("region", { name: "Rain Lane" })).not.toBeInTheDocument();
+    expect(map.getByRole("button", { ...marker, pressed: false })).toBeVisible();
+    expect(mapMock.create).toHaveBeenCalledTimes(1);
   });
 
   it("loads a map measurement summary only when opened and labels a stale flow reading", async () => {
@@ -683,7 +781,7 @@ describe("measurement explorer", () => {
     expect(Object.fromEntries(new URLSearchParams(window.location.search))).toMatchObject({
       a: "ea-shardlow-level",
       b: "ea-stone-rainfall",
-      station: details.getByRole("heading", { name: "Shardlow" }).dataset.stationId,
+      station: "ea-shardlow",
     });
 
     await user.type(screen.getByRole("searchbox"), "stone");
