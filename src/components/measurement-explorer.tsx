@@ -218,16 +218,13 @@ export function MeasurementExplorer({
   }, [count, filtered]);
 
   return (
-    <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-      <div className="min-w-0 lg:w-2/3 lg:shrink-0 [@media(scripting:none)]:hidden">
-        <a
-          href={`#${listId}`}
-          className="link mb-2 inline-block text-sm lg:sr-only lg:focus:not-sr-only"
-        >
-          Browse stations
-        </a>
-        <div className="mb-2 flex flex-wrap items-center gap-2">
+    <div className="flex flex-col gap-8">
+      <div className="min-w-0 [@media(scripting:none)]:hidden">
+        <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
           <Button onClick={() => void copyExplorerLink()}>Copy Explorer link</Button>
+          <a href={`#${listId}`} className="link text-sm">
+            Browse stations
+          </a>
           <span aria-live="polite" className="text-sm">
             {shareResult.copied ? "Link copied" : ""}
           </span>
@@ -318,7 +315,10 @@ export function MeasurementExplorer({
           />
         ) : null}
       </div>
-      <div className="min-w-0 flex-1">
+      <section aria-labelledby={listId} className="@container w-full max-w-4xl min-w-0">
+        <h2 id={listId} tabIndex={-1} className="mb-3 text-lg font-semibold">
+          Stations
+        </h2>
         {items.length > 0 ? (
           <>
             <form
@@ -326,7 +326,7 @@ export function MeasurementExplorer({
               action="/"
               method="get"
               onSubmit={(event) => event.preventDefault()}
-              className="space-y-4 lg:flex lg:flex-wrap lg:items-end lg:gap-x-6 lg:gap-y-4 lg:space-y-0"
+              className="space-y-4 sm:flex sm:flex-wrap sm:items-end sm:gap-x-6 sm:gap-y-4 sm:space-y-0"
             >
               {Object.entries({
                 ...explorerComparisonParams(state),
@@ -336,7 +336,7 @@ export function MeasurementExplorer({
                   <input key={name} type="hidden" name={name} value={value} />
                 ),
               )}
-              <div className="lg:w-full lg:max-w-lg">
+              <div className="sm:w-80">
                 <label htmlFor={searchId} className="block text-sm font-medium">
                   Search
                 </label>
@@ -389,10 +389,7 @@ export function MeasurementExplorer({
             </p>
           </>
         ) : null}
-        <section aria-labelledby={listId} className="@container mt-3 min-w-0">
-          <h2 id={listId} tabIndex={-1} className="mb-3 text-lg font-semibold">
-            Stations
-          </h2>
+        <div className="mt-3">
           {ids.length >= 2 ? (
             <a href="#explorer-comparison" className="link mb-3 inline-block text-sm">
               View comparison chart
@@ -426,8 +423,8 @@ export function MeasurementExplorer({
               Try a station, river or measurement type.
             </EmptyState>
           )}
-        </section>
-      </div>
+        </div>
+      </section>
     </div>
   );
 }

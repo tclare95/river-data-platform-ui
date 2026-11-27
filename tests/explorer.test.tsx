@@ -628,6 +628,17 @@ describe("measurement explorer", () => {
     const mapRegion = screen.getByRole("region", { name: "River map" });
     const map = within(mapRegion);
 
+    const catalogue = screen.getByRole("region", { name: "Stations" });
+    const stationsHeading = within(catalogue).getByRole("heading", { name: "Stations" });
+    expect(
+      mapRegion.compareDocumentPosition(catalogue) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(within(catalogue).getByRole("searchbox", { name: "Search" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Browse stations" })).toHaveAttribute(
+      "href",
+      `#${stationsHeading.id}`,
+    );
+
     await user.click(map.getByRole("button", { name: /^Shardlow ·/ }));
     expect(map.getByRole("button", { name: /^Shardlow ·/, pressed: true })).toBeVisible();
     const panel = screen.getByRole("region", { name: "Shardlow" });
