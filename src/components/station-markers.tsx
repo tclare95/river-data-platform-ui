@@ -37,10 +37,13 @@ export function stationMarkerButton(
   name: string,
   { type, parameters, availability }: StationMarker,
   catchment = false,
+  selected = false,
 ) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = markerButtonClasses;
+  button.setAttribute("aria-pressed", String(selected));
+  if (selected) button.style.zIndex = "1";
   const types =
     type === "multiple"
       ? `Multiple types (${parameters.map((parameter) => (parameter === "level" || parameter === "flow" || parameter === "rainfall" ? measurementTypes[parameter] : parameter)).join(", ")})`
@@ -49,7 +52,12 @@ export function stationMarkerButton(
   button.setAttribute("aria-label", button.title);
 
   const symbol = document.createElement("span");
-  symbol.className = `size-6 shadow-md ring-1 ring-surface ${markerClasses(type, availability)}${catchment ? " outline-2 outline-offset-1 outline-accent-strong" : ""}`;
+  symbol.className = `size-6 shadow-md ring-1 ring-surface ${markerClasses(type, availability)}`;
+  if (selected) {
+    symbol.classList.add("outline-3", "outline-offset-3", "outline-ink");
+  } else if (catchment) {
+    symbol.classList.add("outline-2", "outline-offset-1", "outline-accent-strong");
+  }
   symbol.setAttribute("aria-hidden", "true");
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");

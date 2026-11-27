@@ -1,7 +1,6 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import Link from "next/link";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import { Button } from "@/components/button";
@@ -11,7 +10,7 @@ import { StationMarkerControls, stationMarkerButton } from "./station-markers";
 import type { InventoryStation } from "@/lib/inventory";
 import { classifyStation, matchesStation, type StationFilters } from "@/lib/station-markers";
 import type { OverviewItem } from "@/lib/overview";
-import { ObservationSummaryDisclosure } from "./observation-summary-disclosure";
+import { StationSelection } from "./station-selection";
 import {
   drawRiverTrace,
   traceCatchment,
@@ -21,7 +20,7 @@ import {
 } from "./river-trace-layer";
 import { ErrorState } from "@/components/states";
 import type { StationGroup } from "@/lib/discovery";
-import { measurementPath, parameterLabel } from "@/lib/labels";
+import { parameterLabel } from "@/lib/labels";
 import { writeExplorerParams } from "@/lib/explorer-state";
 import {
   GB_BOUNDS,
@@ -124,19 +123,25 @@ export function StationMap({
   const [status, setStatus] = useState<"loading" | "ready" | "tiles" | "unavailable">("loading");
   const [selectedId, select] = useState(initialStationId);
   const [filters, setFilters] = useState<StationFilters>({ type: "", availability: "" });
-  const [inventoryKey, selectInventoryKey] = useState(initialContext.inventory);
+  const [inventorySelection, setInventorySelection] = useState<
+    | {
+        key: string;
+        station?: InventoryStation;
+      }
+    | undefined
+  >(() => (initialContext.inventory ? { key: initialContext.inventory } : undefined));
+  const inventoryKey = inventorySelection?.key;
+  const [collapsed, setCollapsed] = useState(false);
   const [browseInventory, setBrowseInventory] = useState(0);
   const showInventoryPicker = useCallback(() => setBrowseInventory((value) => value + 1), []);
-  const inventoryHeading = useRef<HTMLHeadingElement>(null);
-  const focusInventory = useRef(false);
   const selectInventory = useCallback(
     (station: InventoryStation) => {
       if (selectedId || inventoryKey !== station.key) pushMapChange.current = true;
       select(undefined);
-      selectInventoryKey(station.key);
-      if (inventoryHeading.current?.dataset.stationKey === station.key)
-        inventoryHeading.current.focus();
-      else focusInventory.current = true;
+      if (inventoryKey === station.key) heading.current?.focus();
+      else focusSelection.current = true;
+      setCollapsed(false);
+      setInventorySelection({ key: station.key, station });
     },
     [inventoryKey, selectedId],
   );
@@ -274,16 +279,22 @@ export function StationMap({
       const station = measurements.find(({ position }) => position);
       if (station?.position) {
         const { stationId, name, watercourseName, source, locationEvidence, position } = station;
-        markers.set(stationId, {
+        const publishedStation = markers.get(stationId);
+        markers.set(
           stationId,
-          name,
-          watercourseName,
-          source,
-          locationEvidence,
-          position,
-          measurements,
-          match: true,
-        });
+          publishedStation
+            ? { ...publishedStation, match: true }
+            : {
+                stationId,
+                name,
+                watercourseName,
+                source,
+                locationEvidence,
+                position,
+                measurements,
+                match: true,
+              },
+        );
       }
     }
     return [...markers.values()];
@@ -366,14 +377,8 @@ export function StationMap({
   const inventory = useViewportInventory(unavailable ? undefined : map);
   const inventoryStations =
     inventory.view.status === "ready" ? inventory.view.data.stations : undefined;
-  const inventorySelected = inventoryStations?.find(({ key }) => key === inventoryKey);
-  const activeInventoryKey = inventorySelected?.key;
-  useEffect(() => {
-    if (activeInventoryKey && focusInventory.current) {
-      focusInventory.current = false;
-      inventoryHeading.current?.focus();
-    }
-  }, [activeInventoryKey]);
+  const inventorySelected =
+    inventorySelection?.station ?? inventoryStations?.find(({ key }) => key === inventoryKey);
 
   const inventoryMeasurementIds = useMemo(
     () =>
@@ -434,17 +439,29 @@ export function StationMap({
         measurements.filter(({ position }) => position).map(({ measurementId }) => measurementId),
       ),
     );
-    return visibleInventory.filter(
+    const markers = visibleInventory.filter(
       ({ measures }) =>
         !measures.some(({ measurementId }) => measurementId && catchmentIds.has(measurementId)),
     );
-  }, [visibleInventory, matchedStations]);
+    if (
+      !inventoryStations &&
+      inventorySelected &&
+      !inventorySelected.measures.some(
+        ({ measurementId }) => measurementId && catchmentIds.has(measurementId),
+      )
+    ) {
+      const marker = classifyStation([], inventorySelected.measures);
+      if (matchesStation(marker, filters)) markers.push({ ...inventorySelected, marker });
+    }
+    return markers;
+  }, [visibleInventory, matchedStations, inventoryStations, inventorySelected, filters]);
   useInventoryMarkers(
     unavailable ? undefined : renderer,
     inventoryMarkers,
     selectInventory,
     showInventoryPicker,
     detailsId,
+    inventoryKey,
   );
   useEffect(() => {
     if (!map || unavailable) return;
@@ -466,7 +483,7 @@ export function StationMap({
       if ((originalEvent.target as Element | null)?.closest(".maplibregl-marker")) return;
       const { lng, lat } = lngLat.wrap();
       select(undefined);
-      selectInventoryKey(undefined);
+      setInventorySelection(undefined);
       selectPoint([lng, lat]);
     };
     map.on("click", onClick);
@@ -549,13 +566,14 @@ export function StationMap({
               ))));
       if (!shown || !matchesStation(marker, filters)) return [];
       const point: [number, number] = [position.longitude, position.latitude];
-      const button = stationMarkerButton(name, marker, match);
+      const button = stationMarkerButton(name, marker, match, stationId === selectedId);
       button.setAttribute("aria-controls", detailsId);
       button.onclick = () => {
-        if (heading.current?.dataset.stationId === stationId) heading.current.focus();
+        if (selectedId === stationId) heading.current?.focus();
         else focusSelection.current = true;
         if (inventoryKey || selectedId !== stationId) pushMapChange.current = true;
-        selectInventoryKey(undefined);
+        setInventorySelection(undefined);
+        setCollapsed(false);
         select(stationId);
       };
       return [new library.Marker({ element: button }).setLngLat(point).addTo(map)];
@@ -575,23 +593,114 @@ export function StationMap({
     showStations,
   ]);
 
-  const selectedStationId = selected?.stationId;
+  const activeStation = inventorySelected ?? selected;
+  const selectionKey = inventorySelected
+    ? `inventory:${inventorySelected.key}`
+    : selected
+      ? `station:${selected.stationId}`
+      : undefined;
   useEffect(() => {
-    if (selectedStationId && focusSelection.current) heading.current?.focus();
+    if (selectionKey && focusSelection.current) heading.current?.focus();
     focusSelection.current = false;
-  }, [selectedStationId]);
+  }, [selectionKey]);
+
+  const latestById = useMemo(
+    () => new Map(items.map(({ measurement, latest }) => [measurement.measurementId, latest])),
+    [items],
+  );
+  const measures = inventorySelected
+    ? inventorySelected.measures.map(({ measurementId, parameter, qualifier, status }) => ({
+        key: JSON.stringify([measurementId, parameter, qualifier, status]),
+        label: [parameter ? parameterLabel(parameter) : "Measurement type unknown", qualifier]
+          .filter(Boolean)
+          .join(" · "),
+        measurementId: measurementId ?? undefined,
+        measurement: measurementId ? publishedMeasurements.get(measurementId) : undefined,
+        latest: measurementId ? latestById.get(measurementId) : undefined,
+        availability: {
+          published: "Published measurement unavailable",
+          not_published: "No data published by RDP",
+          unknown: "RDP availability unknown",
+        }[status],
+      }))
+    : (selected?.measurements ?? []).map((measurement) => ({
+        key: measurement.measurementId,
+        measurementId: measurement.measurementId,
+        label: parameterLabel(measurement.parameter),
+        measurement,
+        latest: latestById.get(measurement.measurementId),
+      }));
+
+  function dismissStation() {
+    pushMapChange.current = true;
+    select(undefined);
+    setInventorySelection(undefined);
+    container.current?.focus({ preventScroll: true });
+  }
+
+  const showSelection = !!activeStation && !unavailable;
 
   return (
     <div className="overflow-hidden rounded-lg border border-line bg-surface">
-      {/* MapLibre adds its own classes to the container, so keep className stable. */}
       <div
-        ref={container}
-        role="region"
-        aria-label="River map"
-        hidden={unavailable}
-        data-tracing={tracing}
-        className="h-72 bg-canvas sm:h-96 lg:h-[clamp(26rem,60svh,42rem)] data-[tracing=true]:[&_.maplibregl-canvas]:cursor-crosshair"
-      />
+        className={
+          showSelection ? "lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(14rem,35%)]" : undefined
+        }
+      >
+        {/* MapLibre adds its own classes to the container, so keep className stable. */}
+        <div
+          ref={container}
+          role="region"
+          aria-label="River map"
+          tabIndex={-1}
+          hidden={unavailable}
+          data-tracing={tracing}
+          className="h-72 bg-canvas sm:h-96 lg:h-[clamp(26rem,60svh,42rem)] data-[tracing=true]:[&_.maplibregl-canvas]:cursor-crosshair"
+        />
+        <div
+          id={detailsId}
+          className="relative empty:hidden lg:border-l lg:border-line lg:bg-canvas"
+        >
+          {activeStation && selectionKey && !unavailable ? (
+            <StationSelection
+              selectionKey={selectionKey}
+              name={activeStation.name}
+              river={inventorySelected ? inventorySelected.watercourse : selected?.watercourseName}
+              measures={measures}
+              discoverable={
+                inventorySelected &&
+                classifyStation([], inventorySelected.measures).availability === "discoverable"
+              }
+              headingRef={heading}
+              collapsed={collapsed}
+              onToggle={() => setCollapsed(!collapsed)}
+              onClose={dismissStation}
+              comparisonAction={comparisonAction}
+            >
+              <p className="text-ink-muted">
+                Station reference position · {activeStation.position.precisionMetres} m resolution
+                {selected?.locationEvidence ? (
+                  <>
+                    {" · "}
+                    <a className="link" href={selected.locationEvidence}>
+                      {selected.source.label} station record
+                    </a>
+                  </>
+                ) : null}
+              </p>
+              {tracing ? (
+                <Button
+                  onClick={() =>
+                    selectPoint([activeStation.position.longitude, activeStation.position.latitude])
+                  }
+                >
+                  Trace from {activeStation.name}
+                </Button>
+              ) : null}
+            </StationSelection>
+          ) : null}
+        </div>
+      </div>
       {unavailable ? (
         <ErrorState title="River map unavailable">Browse the station list.</ErrorState>
       ) : status === "tiles" || status === "loading" ? (
@@ -649,7 +758,7 @@ export function StationMap({
                   onClick={() => {
                     const { lng, lat } = map.getCenter().wrap();
                     select(undefined);
-                    selectInventoryKey(undefined);
+                    setInventorySelection(undefined);
                     selectPoint([lng, lat]);
                   }}
                 >
@@ -838,138 +947,6 @@ export function StationMap({
           comparisonAction={comparisonAction}
         />
       ) : null}
-      <div id={detailsId}>
-        {inventorySelected && !unavailable ? (
-          <div className="space-y-2 border-t border-line px-5 py-4 sm:px-6">
-            <h2
-              ref={inventoryHeading}
-              tabIndex={-1}
-              data-station-key={inventorySelected.key}
-              className="text-lg font-semibold"
-            >
-              {inventorySelected.name}
-            </h2>
-            {inventorySelected.watercourse ? (
-              <p className="text-sm text-ink-muted">
-                Provider watercourse · {inventorySelected.watercourse}
-              </p>
-            ) : null}
-            {inventorySelected.measures.length ? (
-              <ul className="space-y-1">
-                {inventorySelected.measures.map(
-                  ({ measurementId, parameter, qualifier, status }) => {
-                    const label = [
-                      parameter ? parameterLabel(parameter) : "Measurement type unknown",
-                      qualifier,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ");
-                    const measurement = measurementId
-                      ? publishedMeasurements.get(measurementId)
-                      : undefined;
-                    return (
-                      <li
-                        key={JSON.stringify([measurementId, parameter, qualifier, status])}
-                        className="flex flex-wrap items-center gap-x-3"
-                      >
-                        {measurementId ? (
-                          <Link
-                            className="link"
-                            href={measurementPath(measurementId)}
-                            prefetch={false}
-                          >
-                            {label}
-                          </Link>
-                        ) : (
-                          <span>{label}</span>
-                        )}
-                        <span className="text-sm text-ink-muted">
-                          {
-                            {
-                              published: "Published by RDP",
-                              not_published: "No data published by RDP",
-                              unknown: "RDP availability unknown",
-                            }[status]
-                          }
-                        </span>
-                        {measurement ? comparisonAction(measurement) : null}
-                        {measurement ? (
-                          <ObservationSummaryDisclosure measurement={measurement} />
-                        ) : null}
-                      </li>
-                    );
-                  },
-                )}
-              </ul>
-            ) : (
-              <p className="text-sm text-ink-muted">
-                Measurement types are unavailable for this station.
-              </p>
-            )}
-            <p className="text-sm text-ink-muted">
-              Station reference position · {inventorySelected.position.precisionMetres} m resolution
-            </p>
-            {tracing ? (
-              <Button
-                onClick={() =>
-                  selectPoint([
-                    inventorySelected.position.longitude,
-                    inventorySelected.position.latitude,
-                  ])
-                }
-              >
-                Trace from {inventorySelected.name}
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-        {selected && !unavailable ? (
-          <div className="space-y-2 border-t border-line px-5 py-4 sm:px-6">
-            <h2
-              ref={heading}
-              tabIndex={-1}
-              data-station-id={selected.stationId}
-              className="text-lg font-semibold"
-            >
-              {selected.name}
-            </h2>
-            {selected.watercourseName ? (
-              <p className="text-sm text-ink-muted">{selected.watercourseName}</p>
-            ) : null}
-            <ul className="space-y-1">
-              {selected.measurements.map((measurement) => (
-                <li key={measurement.measurementId} className="flex flex-wrap items-center gap-x-3">
-                  <Link className="link" href={measurementPath(measurement.measurementId)}>
-                    {parameterLabel(measurement.parameter)}
-                  </Link>
-                  {comparisonAction(measurement)}
-                  <ObservationSummaryDisclosure measurement={measurement} />
-                </li>
-              ))}
-            </ul>
-            <p className="text-sm text-ink-muted">
-              Station reference position · {selected.position.precisionMetres} m resolution
-              {selected.locationEvidence ? (
-                <>
-                  {" · "}
-                  <a className="link" href={selected.locationEvidence}>
-                    {selected.source.label} station record
-                  </a>
-                </>
-              ) : null}
-            </p>
-            {tracing ? (
-              <Button
-                onClick={() =>
-                  selectPoint([selected.position.longitude, selected.position.latitude])
-                }
-              >
-                Trace from {selected.name}
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
     </div>
   );
 }
