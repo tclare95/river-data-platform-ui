@@ -85,11 +85,15 @@ in-process cache holds up to eight validated release/sample/direction/geometry r
 reads evicted. Coordinate queries and public responses are uncached. The public JSON cap is 4 MiB. Include the
 tracer path in the Vercel Firewall rate-limit rule before enabling live traffic.
 
-Selecting a map point, the map centre or a verified station position starts an upstream trace. Subsequent
-direction changes apply to that point. Station markers still open station details. One MapLibre source displays the selected point, any published
-snapped sample, independently toggled upstream and downstream reaches, and a toggleable catchment. Directions are
-loaded on demand for the current point and only combined within the same release. Changing the trace point or
-direction cancels the previous browser request. A zero-offset pour point shares the snapped sample's coordinates.
+The map opens in Explore mode. Trace river enables a one-time map point or map centre selection for
+an upstream trace. A selected station with verified coordinates offers a direct upstream catchment action.
+The completed trace and its layer visibility persist while visitors pan, zoom or select a station.
+Cancel trace keeps the current catchment and aborts the pending browser trace request. Clear catchment
+removes the result and its overlays. Shared URLs restore the trace context in Explore mode.
+
+One MapLibre source displays the selected point, any published snapped sample, independently toggled
+upstream and downstream reaches, and a toggleable catchment. Direction changes apply to the selected
+point. Directions are loaded on demand and only combined within the same release. A zero-offset pour point shares the snapped sample's coordinates.
 For a downstream offset, the map describes where the published sample lies along the river because the public
 response supplies the distance only. The catchment is modelled drainage and leaves the station comparison untouched.
 

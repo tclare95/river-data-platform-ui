@@ -134,21 +134,11 @@ export function StationMap({
   const [collapsed, setCollapsed] = useState(false);
   const [browseInventory, setBrowseInventory] = useState(0);
   const showInventoryPicker = useCallback(() => setBrowseInventory((value) => value + 1), []);
-  const selectInventory = useCallback(
-    (station: InventoryStation) => {
-      if (selectedId || inventoryKey !== station.key) pushMapChange.current = true;
-      select(undefined);
-      if (inventoryKey === station.key) heading.current?.focus();
-      else focusSelection.current = true;
-      setCollapsed(false);
-      setInventorySelection({ key: station.key, station });
-    },
-    [inventoryKey, selectedId],
-  );
   const [showStations, setShowStations] = useState(
     initialContext.showStations ?? !!initialStationId,
   );
-  const [tracing, setTracing] = useState(initialContext.tracing !== false);
+  const [choosingTracePoint, setChoosingTracePoint] = useState(false);
+  const [tracePending, setTracePending] = useState(false);
   const [direction, setDirection] = useState<RiverDirection>(initialTrace?.direction ?? "upstream");
   const [trace, setTrace] = useState<Trace | undefined>(() =>
     initialTrace
@@ -162,9 +152,34 @@ export function StationMap({
   const request = useRef<AbortController>(null);
   const discoveryRequest = useRef<AbortController>(null);
 
-  const clearTrace = () => {
-    if (trace) pushMapChange.current = true;
+  const cancelTrace = useCallback(() => {
+    setChoosingTracePoint(false);
     request.current?.abort();
+    setTracePending(false);
+    // A shared link can have a point before either route has loaded.
+    setTrace((current) =>
+      current?.upstream || current?.downstream || current?.error ? current : undefined,
+    );
+  }, []);
+
+  const selectInventory = useCallback(
+    (station: InventoryStation) => {
+      if (selectedId || inventoryKey !== station.key) {
+        pushMapChange.current = true;
+        cancelTrace();
+      }
+      select(undefined);
+      if (inventoryKey === station.key) heading.current?.focus();
+      else focusSelection.current = true;
+      setCollapsed(false);
+      setInventorySelection({ key: station.key, station });
+    },
+    [cancelTrace, inventoryKey, selectedId],
+  );
+
+  const clearTrace = () => {
+    pushMapChange.current = true;
+    cancelTrace();
     discoveryRequest.current?.abort();
     setTrace(undefined);
   };
@@ -207,19 +222,29 @@ export function StationMap({
   }, []);
 
   const traceFrom = useCallback(
-    async (point: TracePoint, direction: RiverDirection, previous?: Trace) => {
+    async (
+      point: TracePoint,
+      direction: RiverDirection,
+      {
+        previous,
+        displayDirection = direction,
+        onCommit,
+      }: { previous?: Trace; displayDirection?: RiverDirection; onCommit?: () => void } = {},
+    ) => {
       request.current?.abort();
-      if (!previous) discoveryRequest.current?.abort();
-      setTrace((current) => (previous && current ? { ...current, error: undefined } : { point }));
-      if (previous?.[direction]) return;
+      if (previous?.[direction]) {
+        onCommit?.();
+        setDirection(displayDirection);
+        setTracePending(false);
+        return;
+      }
 
       const controller = new AbortController();
       request.current = controller;
+      setTracePending(true);
       const query = pointQuery(point);
       query.set("direction", direction);
-      try {
-        const response = await fetch(`/api/river/trace?${query}`, { signal: controller.signal });
-        const result = response.ok ? ((await response.json()) as { data: TraceResult }).data : null;
+      const commit = (result: TraceResult | null, error?: string, retired = false) => {
         if (controller.signal.aborted) return;
         const other = previous?.upstream ?? previous?.downstream;
         // Keep the two directions together only when they describe the same match.
@@ -229,23 +254,30 @@ export function StationMap({
           (other.release.version !== result.release.version ||
             other.release.releaseId !== result.release.releaseId ||
             other.matchStatus !== result.matchStatus);
-        if (changed || response.status === 410) discoveryRequest.current?.abort();
+        if (!previous || changed || retired) discoveryRequest.current?.abort();
+        onCommit?.();
+        setDirection(displayDirection);
         setTrace((current) => {
-          if (!current) return current;
-          if (response.status === 410) return { point, error: traceErrors[410] };
-          if (!result) {
-            return { ...current, error: traceErrors[response.status] ?? "River trace unavailable" };
-          }
-          if (changed) return { point, [direction]: result };
-          return { ...current, [direction]: result };
+          const base = previous && !changed && !retired ? (current ?? previous) : { point };
+          return result ? { ...base, [direction]: result, error: undefined } : { ...base, error };
         });
         if (direction === "upstream" && result && traceCatchment(result)) {
           void findMeasurements(point, result);
         }
-        return result;
+      };
+      try {
+        const response = await fetch(`/api/river/trace?${query}`, { signal: controller.signal });
+        const result = response.ok ? ((await response.json()) as { data: TraceResult }).data : null;
+        commit(
+          result,
+          traceErrors[response.status] ?? "River trace unavailable",
+          response.status === 410,
+        );
+        return { result, signal: controller.signal };
       } catch {
-        if (!controller.signal.aborted)
-          setTrace((current) => current && { ...current, error: "River trace unavailable" });
+        commit(null, "River trace unavailable");
+      } finally {
+        if (!controller.signal.aborted) setTracePending(false);
       }
     },
     [findMeasurements],
@@ -255,10 +287,17 @@ export function StationMap({
   const upstreamResult = trace?.upstream;
   const catchment = useMemo(() => traceCatchment(upstreamResult), [upstreamResult]);
   const selectPoint = useCallback(
-    (point: TracePoint) => {
-      pushMapChange.current = true;
-      setDirection("upstream");
-      void traceFrom(point, "upstream");
+    (point: TracePoint, fromMap = false) => {
+      setChoosingTracePoint(false);
+      void traceFrom(point, "upstream", {
+        onCommit: () => {
+          pushMapChange.current = true;
+          if (fromMap) {
+            select(undefined);
+            setInventorySelection(undefined);
+          }
+        },
+      });
     },
     [traceFrom],
   );
@@ -348,14 +387,19 @@ export function StationMap({
         if (initialTrace) {
           const { point, direction, showCatchment, hiddenRoutes, bothDirections } = initialTrace;
           const previous = { point, showCatchment, hiddenRoutes };
-          void traceFrom(point, direction, previous).then((result) => {
+          void traceFrom(point, direction, { previous }).then((completed) => {
             if (
               active &&
-              result?.matchStatus === "Matched" &&
+              completed &&
+              !completed.signal.aborted &&
+              completed.result?.matchStatus === "Matched" &&
               (direction === "downstream" || bothDirections)
             ) {
               const other = direction === "downstream" ? "upstream" : "downstream";
-              void traceFrom(point, other, { ...previous, [direction]: result });
+              void traceFrom(point, other, {
+                previous: { ...previous, [direction]: completed.result },
+                displayDirection: direction,
+              });
             }
           });
         }
@@ -478,19 +522,22 @@ export function StationMap({
   }, [map, unavailable, writeMap]);
 
   useEffect(() => {
-    if (!map || !tracing || unavailable) return;
+    if (!map || !choosingTracePoint || unavailable) return;
     const onClick = ({ originalEvent, lngLat }: MapMouseEvent) => {
-      if ((originalEvent.target as Element | null)?.closest(".maplibregl-marker")) return;
+      if (
+        originalEvent.defaultPrevented ||
+        (originalEvent.target as Element | null)?.closest(".maplibregl-marker, .maplibregl-ctrl")
+      )
+        return;
+      map.off("click", onClick);
       const { lng, lat } = lngLat.wrap();
-      select(undefined);
-      setInventorySelection(undefined);
-      selectPoint([lng, lat]);
+      selectPoint([lng, lat], true);
     };
     map.on("click", onClick);
     return () => {
       map.off("click", onClick);
     };
-  }, [map, tracing, unavailable, selectPoint]);
+  }, [map, choosingTracePoint, unavailable, selectPoint]);
 
   const result = trace?.[direction];
   const provenance = result ?? trace?.upstream ?? trace?.downstream;
@@ -508,7 +555,6 @@ export function StationMap({
       station: sharedStationId,
       inventory: inventoryKey,
       showStations: showStations === !!sharedStationId ? undefined : showStations,
-      tracing,
       trace: point
         ? { point, direction, showCatchment: sharedCatchment, bothDirections, hiddenRoutes }
         : undefined,
@@ -520,7 +566,6 @@ export function StationMap({
     sharedStationId,
     inventoryKey,
     showStations,
-    tracing,
     point,
     direction,
     sharedCatchment,
@@ -571,7 +616,10 @@ export function StationMap({
       button.onclick = () => {
         if (selectedId === stationId) heading.current?.focus();
         else focusSelection.current = true;
-        if (inventoryKey || selectedId !== stationId) pushMapChange.current = true;
+        if (inventoryKey || selectedId !== stationId) {
+          pushMapChange.current = true;
+          cancelTrace();
+        }
         setInventorySelection(undefined);
         setCollapsed(false);
         select(stationId);
@@ -580,6 +628,7 @@ export function StationMap({
     });
     return () => markers.forEach((marker) => marker.remove());
   }, [
+    cancelTrace,
     detailsId,
     renderer,
     mappedStations,
@@ -632,6 +681,7 @@ export function StationMap({
       }));
 
   function dismissStation() {
+    cancelTrace();
     pushMapChange.current = true;
     select(undefined);
     setInventorySelection(undefined);
@@ -654,7 +704,7 @@ export function StationMap({
           aria-label="River map"
           tabIndex={-1}
           hidden={unavailable}
-          data-tracing={tracing}
+          data-tracing={choosingTracePoint}
           className="h-72 bg-canvas sm:h-96 lg:h-[clamp(26rem,60svh,42rem)] data-[tracing=true]:[&_.maplibregl-canvas]:cursor-crosshair"
         />
         <div
@@ -688,15 +738,13 @@ export function StationMap({
                   </>
                 ) : null}
               </p>
-              {tracing ? (
-                <Button
-                  onClick={() =>
-                    selectPoint([activeStation.position.longitude, activeStation.position.latitude])
-                  }
-                >
-                  Trace from {activeStation.name}
-                </Button>
-              ) : null}
+              <Button
+                onClick={() =>
+                  selectPoint([activeStation.position.longitude, activeStation.position.latitude])
+                }
+              >
+                Trace upstream catchment
+              </Button>
             </StationSelection>
           ) : null}
         </div>
@@ -712,16 +760,16 @@ export function StationMap({
         <div className="space-y-2 border-t border-line px-5 py-3 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              aria-pressed={tracing}
+              aria-pressed={choosingTracePoint}
               className="aria-pressed:border-accent aria-pressed:bg-accent-soft"
-              onClick={() => {
-                pushMapChange.current = true;
-                if (tracing) clearTrace();
-                setTracing(!tracing);
-              }}
+              disabled={tracePending}
+              onClick={() => setChoosingTracePoint(!choosingTracePoint)}
             >
               Trace river
             </Button>
+            {choosingTracePoint || tracePending ? (
+              <Button onClick={cancelTrace}>Cancel trace</Button>
+            ) : null}
             {stations.length > 0 ? (
               <Button
                 aria-pressed={showStations}
@@ -734,47 +782,51 @@ export function StationMap({
                 Published stations
               </Button>
             ) : null}
-            {tracing ? (
+            {trace ? (
               <>
                 <label className="flex items-center gap-2 text-sm">
                   Direction
                   <select
                     className="min-h-10 rounded-md border border-line-input bg-surface px-2"
                     value={direction}
-                    disabled={!point || (!trace?.upstream && !trace?.downstream && !trace?.error)}
+                    disabled={tracePending || choosingTracePoint}
                     onChange={(event) => {
                       const next = event.target.value as RiverDirection;
                       if (next === direction) return;
-                      pushMapChange.current = true;
-                      setDirection(next);
-                      if (trace) void traceFrom(trace.point, next, trace);
+                      void traceFrom(trace.point, next, {
+                        previous: trace,
+                        onCommit: () => {
+                          pushMapChange.current = true;
+                        },
+                      });
                     }}
                   >
                     <option value="downstream">Downstream</option>
                     <option value="upstream">Upstream</option>
                   </select>
                 </label>
-                <Button
-                  onClick={() => {
-                    const { lng, lat } = map.getCenter().wrap();
-                    select(undefined);
-                    setInventorySelection(undefined);
-                    selectPoint([lng, lat]);
-                  }}
-                >
-                  Select map centre
-                </Button>
-                <Button disabled={!point} onClick={clearTrace}>
-                  Clear trace
-                </Button>
+                <Button onClick={clearTrace}>Clear catchment</Button>
               </>
             ) : null}
+            {choosingTracePoint ? (
+              <Button
+                onClick={() => {
+                  const { lng, lat } = map.getCenter().wrap();
+                  selectPoint([lng, lat], true);
+                  container.current?.focus({ preventScroll: true });
+                }}
+              >
+                Select map centre
+              </Button>
+            ) : null}
           </div>
-          {tracing && !point ? (
-            <p className="text-sm text-ink-muted">
-              Select a point on a river to see its catchment.
-            </p>
-          ) : null}
+          <p role="status" className="text-sm text-ink-muted">
+            {choosingTracePoint
+              ? "Select a point on a river to trace its upstream catchment."
+              : tracePending
+                ? "Tracing river…"
+                : null}
+          </p>
           {showStations && !stations.some(({ stationId }) => filteredStationIds.has(stationId)) ? (
             <p className="text-sm text-ink-muted">No matching stations have verified locations</p>
           ) : null}
@@ -805,131 +857,121 @@ export function StationMap({
           </details>
         </div>
       ) : null}
-      {tracing && !unavailable ? (
-        <div
-          className={trace ? "space-y-2 border-t border-line px-5 py-3 text-sm sm:px-6" : undefined}
-        >
-          {trace ? (
-            <>
-              <p className="flex flex-wrap gap-x-4 gap-y-1 text-ink-muted">
-                <span className="inline-flex items-center gap-1.5">
-                  <span aria-hidden="true" className="size-3 rounded-full border-2 border-ink" />
-                  Selected point
-                </span>
-                {snapped?.position ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <span aria-hidden="true" className="size-2 rounded-full bg-compare-secondary" />
-                    Snapped sample · {Math.round(snapped.snapOffsetM)} m away
-                  </span>
-                ) : null}
-                {showCatchment && catchment?.pourPointOffsetM === 0 && snapped?.position ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <span
-                      aria-hidden="true"
-                      className="size-3 rounded-full border-2 border-accent"
-                    />
-                    Catchment pour point · at the snapped sample
-                  </span>
-                ) : null}
-              </p>
-              <div role="status" className="space-y-1">
-                {result ? (
-                  <>
-                    <p>
-                      {matchLabels[result.matchStatus]}
-                      {result.route
-                        ? ` · ${result.route.direction} route ${result.route.completeness}`
-                        : null}
-                      {result.matchStatus === "Matched" && !traceGeometry(result)
-                        ? " · No route geometry to display"
-                        : null}
-                    </p>
-                    {direction === "upstream" && result.matchStatus === "Matched" && !catchment ? (
-                      <p>Catchment boundary unavailable for this trace.</p>
-                    ) : null}
-                  </>
-                ) : (
-                  <p>{trace.error ?? "Tracing river…"}</p>
-                )}
-              </div>
-              {provenance ? (
-                <p className="break-words text-ink-muted">
-                  Release {provenance.release.releaseId} · {provenance.release.version.slice(0, 12)}
-                  {provenance.attribution ? ` · ${provenance.attribution}` : null}
+      {trace && !unavailable ? (
+        <div className="space-y-2 border-t border-line px-5 py-3 text-sm sm:px-6">
+          <p className="flex flex-wrap gap-x-4 gap-y-1 text-ink-muted">
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden="true" className="size-3 rounded-full border-2 border-ink" />
+              Selected point
+            </span>
+            {snapped?.position ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span aria-hidden="true" className="size-2 rounded-full bg-compare-secondary" />
+                Snapped sample · {Math.round(snapped.snapOffsetM)} m away
+              </span>
+            ) : null}
+            {showCatchment && catchment?.pourPointOffsetM === 0 && snapped?.position ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span aria-hidden="true" className="size-3 rounded-full border-2 border-accent" />
+                Catchment pour point · at the snapped sample
+              </span>
+            ) : null}
+          </p>
+          <div role="status" className="space-y-1">
+            {result ? (
+              <>
+                <p>
+                  {matchLabels[result.matchStatus]}
+                  {result.route
+                    ? ` · ${result.route.direction} route ${result.route.completeness}`
+                    : null}
+                  {result.matchStatus === "Matched" && !traceGeometry(result)
+                    ? " · No route geometry to display"
+                    : null}
                 </p>
-              ) : null}
-              {upstream || downstream || catchment ? (
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                  {(["upstream", "downstream"] as const).map((layer) => {
-                    if (!(layer === "upstream" ? upstream : downstream)) return null;
-                    return (
-                      <label key={layer} className="inline-flex min-h-11 items-center gap-2">
-                        <input
-                          type="checkbox"
-                          className="size-4 accent-accent"
-                          checked={!trace.hiddenRoutes?.[layer]}
-                          onChange={(event) => {
-                            const hidden = !event.target.checked;
-                            pushMapChange.current = true;
-                            setTrace(
-                              (current) =>
-                                current && {
-                                  ...current,
-                                  hiddenRoutes: { ...current.hiddenRoutes, [layer]: hidden },
-                                },
-                            );
-                          }}
-                        />
-                        <span
-                          aria-hidden="true"
-                          className={
-                            layer === "upstream"
-                              ? "h-0.5 w-3 bg-compare-tertiary"
-                              : "h-0.5 w-3 bg-compare-secondary"
-                          }
-                        />
-                        {layer === "upstream" ? "Upstream reaches" : "Downstream route"}
-                      </label>
-                    );
-                  })}
-                  {catchment ? (
-                    <Button
-                      className="min-h-11"
-                      onClick={() => {
+                {direction === "upstream" && result.matchStatus === "Matched" && !catchment ? (
+                  <p>Catchment boundary unavailable for this trace.</p>
+                ) : null}
+              </>
+            ) : (
+              <p>{trace.error}</p>
+            )}
+          </div>
+          {provenance ? (
+            <p className="break-words text-ink-muted">
+              Release {provenance.release.releaseId} · {provenance.release.version.slice(0, 12)}
+              {provenance.attribution ? ` · ${provenance.attribution}` : null}
+            </p>
+          ) : null}
+          {upstream || downstream || catchment ? (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              {(["upstream", "downstream"] as const).map((layer) => {
+                if (!(layer === "upstream" ? upstream : downstream)) return null;
+                return (
+                  <label key={layer} className="inline-flex min-h-11 items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-accent"
+                      checked={!trace.hiddenRoutes?.[layer]}
+                      onChange={(event) => {
+                        const hidden = !event.target.checked;
                         pushMapChange.current = true;
                         setTrace(
                           (current) =>
                             current && {
                               ...current,
-                              showCatchment: current.showCatchment === false,
+                              hiddenRoutes: { ...current.hiddenRoutes, [layer]: hidden },
                             },
                         );
                       }}
-                    >
-                      {showCatchment ? "Hide catchment" : "Show catchment"}
-                    </Button>
-                  ) : null}
-                </div>
+                    />
+                    <span
+                      aria-hidden="true"
+                      className={
+                        layer === "upstream"
+                          ? "h-0.5 w-3 bg-compare-tertiary"
+                          : "h-0.5 w-3 bg-compare-secondary"
+                      }
+                    />
+                    {layer === "upstream" ? "Upstream reaches" : "Downstream route"}
+                  </label>
+                );
+              })}
+              {catchment ? (
+                <Button
+                  className="min-h-11"
+                  onClick={() => {
+                    pushMapChange.current = true;
+                    setTrace(
+                      (current) =>
+                        current && {
+                          ...current,
+                          showCatchment: current.showCatchment === false,
+                        },
+                    );
+                  }}
+                >
+                  {showCatchment ? "Hide catchment" : "Show catchment"}
+                </Button>
               ) : null}
-              {showCatchment && catchment ? (
-                <div className="space-y-1 text-ink-muted">
-                  <p>
-                    <strong className="text-ink">
-                      Selected point’s modelled catchment · {formatArea.format(catchment.areaKm2)}{" "}
-                      km²
-                    </strong>
-                  </p>
-                  <p>Source · {catchment.sourceNetworkRelease}</p>
-                  {catchment.pourPointOffsetM > 0 ? (
-                    <p>
-                      The catchment pour point is a published sample{" "}
-                      {formatArea.format(catchment.pourPointOffsetM)} m downstream of the snapped
-                      river sample for the selected point.
-                    </p>
-                  ) : null}
-                </div>
+            </div>
+          ) : null}
+          {showCatchment && catchment ? (
+            <div className="space-y-1 text-ink-muted">
+              <p>
+                <strong className="text-ink">
+                  Selected point’s modelled catchment · {formatArea.format(catchment.areaKm2)} km²
+                </strong>
+              </p>
+              <p>Source · {catchment.sourceNetworkRelease}</p>
+              {catchment.pourPointOffsetM > 0 ? (
+                <p>
+                  The catchment pour point is a published sample{" "}
+                  {formatArea.format(catchment.pourPointOffsetM)} m downstream of the snapped river
+                  sample for the selected point.
+                </p>
               ) : null}
-            </>
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -939,11 +981,7 @@ export function StationMap({
           find={() => {
             if (upstreamResult) void findMeasurements(trace.point, upstreamResult);
           }}
-          refreshTrace={() => {
-            pushMapChange.current = true;
-            setDirection("upstream");
-            void traceFrom(trace.point, "upstream");
-          }}
+          refreshTrace={() => selectPoint(trace.point)}
           comparisonAction={comparisonAction}
         />
       ) : null}

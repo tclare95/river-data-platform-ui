@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INVENTORY_DEBOUNCE_MS } from "@/components/inventory-map";
@@ -104,6 +104,10 @@ const links = () =>
     .map((link) => link.textContent);
 const enableStations = async (user: ReturnType<typeof userEvent.setup>) =>
   user.click(await screen.findByRole("button", { name: "Published stations", pressed: false }));
+
+async function armTrace() {
+  fireEvent.click(await screen.findByRole("button", { name: "Trace river", pressed: false }));
+}
 
 function mapClick(target: HTMLElement, lng = -1.25, lat = 52.5) {
   act(() => {
@@ -502,11 +506,74 @@ describe("measurement explorer", () => {
       screen.getByText(/Drainage area overview boundaries are currently unavailable/),
     ).toBeVisible();
 
+    await armTrace();
     mapClick(map);
     expect(await screen.findByText(/Selected point’s modelled catchment/)).toBeInTheDocument();
     expect(await screen.findByText("No matching published measurements")).toBeInTheDocument();
     expect(fetchRiver).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(traceKinds()).toContain("catchment"));
+  });
+
+  it("returns to Explore after each trace point and preserves a catchment when a new trace is cancelled", async () => {
+    const user = userEvent.setup();
+    let finishReplacement!: (response: Response) => void;
+    const fetchRiver = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(catchmentTrace())
+      .mockResolvedValueOnce(catchmentResults())
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishReplacement = resolve;
+          }),
+      );
+    vi.stubGlobal("fetch", fetchRiver);
+    render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
+    const map = screen.getByRole("region", { name: "River map" });
+    const traceButton = await screen.findByRole("button", { name: "Trace river", pressed: false });
+    act(() => mapMock.events.dispatchEvent(new Event("load")));
+
+    mapClick(map);
+    act(() => mapMock.events.dispatchEvent(new Event("moveend")));
+    await user.click(traceButton);
+    expect(
+      screen.getByText("Select a point on a river to trace its upstream catchment."),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel trace" }));
+    mapClick(map);
+    expect(fetchRiver).not.toHaveBeenCalled();
+
+    await user.click(traceButton);
+    mapClick(map);
+    expect(traceButton).toHaveAttribute("aria-pressed", "false");
+    mapClick(map, -1.2, 52.6);
+    await screen.findByText("No matching published measurements");
+    mapClick(map, -1.2, 52.6);
+    act(() => mapMock.events.dispatchEvent(new Event("moveend")));
+    expect(fetchRiver).toHaveBeenCalledTimes(2);
+    const existingOverlay = currentTraceData();
+    expect(traceKinds()).toContain("catchment");
+
+    await user.click(traceButton);
+    await user.click(screen.getByRole("button", { name: "Select map centre" }));
+    expect(fetchRiver.mock.calls[2][0]).toBe(
+      "/api/river/trace?lon=-1.30000000&lat=52.80000000&direction=upstream",
+    );
+    expect(screen.getByText("Tracing river…")).toBeVisible();
+    expect(currentTraceData()).toEqual(existingOverlay);
+    await user.click(screen.getByRole("button", { name: "Cancel trace" }));
+    expect(fetchRiver.mock.calls[2][1]?.signal?.aborted).toBe(true);
+    await act(async () => finishReplacement(catchmentTrace()));
+    expect(fetchRiver).toHaveBeenCalledTimes(3);
+    expect(currentTraceData()).toEqual(existingOverlay);
+    expect(new URLSearchParams(location.search).get("traceLon")).toBe("-1.25000000");
+    expect(screen.getByText("No matching published measurements")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Clear catchment" }));
+    expect(traceKinds()).toEqual([]);
+    expect(new URLSearchParams(location.search).has("traceLon")).toBe(false);
+    mapClick(map);
+    expect(fetchRiver).toHaveBeenCalledTimes(3);
   });
 
   it.each([
@@ -919,21 +986,20 @@ describe("measurement explorer", () => {
     await enableStations(user);
     const marker = await within(map).findByRole("button", { name: /^Shardlow ·/ });
     act(() => mapMock.events.dispatchEvent(new Event("load")));
-    const mode = screen.getByRole("button", { name: "Trace river", pressed: true });
-    await user.click(mode);
+    const mode = screen.getByRole("button", { name: "Trace river", pressed: false });
     mapClick(map);
     expect(fetchTrace).not.toHaveBeenCalled();
-    expect(map).toHaveClass("maplibregl-map");
     await user.click(mode);
     expect(mode).toHaveAttribute("aria-pressed", "true");
-    expect(map).toHaveClass("maplibregl-map");
+    mapClick(marker);
+    expect(fetchTrace).not.toHaveBeenCalled();
     marker.focus();
     await user.keyboard("{Enter}");
     mapClick(marker);
     expect(fetchTrace).not.toHaveBeenCalled();
     const details = within(document.getElementById(marker.getAttribute("aria-controls")!)!);
     expect(details.getAllByRole("button", { name: /^Add to comparison/ })).toHaveLength(2);
-    const station = screen.getByRole("button", { name: "Trace from Shardlow" });
+    const station = screen.getByRole("button", { name: "Trace upstream catchment" });
     station.focus();
     await user.keyboard("{Enter}");
     expect(fetchTrace.mock.calls[0][0]).toBe(
@@ -974,11 +1040,11 @@ describe("measurement explorer", () => {
     await waitFor(() => expect(traceKinds()).toContain("downstream"));
     expect(mapMock.addSource).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: "Clear trace" }));
+    await user.click(screen.getByRole("button", { name: "Clear catchment" }));
     expect(mapMock.setData).toHaveBeenLastCalledWith({ type: "FeatureCollection", features: [] });
     expect(screen.queryByText(/upstream route incomplete/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
-    await user.click(mode);
+    expect(mode).toHaveAttribute("aria-pressed", "false");
     expect(details.getAllByRole("button", { name: /^Add to comparison/ })).toHaveLength(2);
     expect(map).toHaveClass("maplibregl-map");
     mapClick(map);
@@ -1031,10 +1097,11 @@ describe("measurement explorer", () => {
       }
       const compare = screen.getByRole("link", { name: "Open full comparison" });
       const comparisonUrl = compare.getAttribute("href");
-      const direction = screen.getByRole("combobox", { name: "Direction" });
       const map = screen.getByRole("region", { name: "River map" });
+      await armTrace();
       mapClick(map);
       await screen.findByRole("button", { name: "Hide catchment" });
+      const direction = screen.getByRole("combobox", { name: "Direction" });
       await waitFor(() =>
         expect(currentTraceData().features).toContainEqual({
           type: "Feature",
@@ -1096,14 +1163,15 @@ describe("measurement explorer", () => {
       expect(traceKinds()).toContain("catchment");
       expect(downstream).not.toBeChecked();
       expect(fetchTrace).toHaveBeenCalledTimes(3);
-      await user.click(screen.getByRole("button", { name: "Clear trace" }));
+      await user.click(screen.getByRole("button", { name: "Clear catchment" }));
       expect(traceKinds()).toEqual([]);
       expect(details.queryByRole("heading", { name: "Shardlow" })).not.toBeInTheDocument();
       expect(compare).toHaveAttribute("href", comparisonUrl);
 
+      await armTrace();
       mapClick(map, -1.2, 52.6);
-      expect(direction).toHaveValue("upstream");
       expect(await screen.findByRole("button", { name: "Hide catchment" })).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Direction" })).toHaveValue("upstream");
       await waitFor(() => expect(traceKinds()).toContain("catchment"));
     },
   );
@@ -1150,6 +1218,7 @@ describe("measurement explorer", () => {
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
     await screen.findByRole("button", { name: "Trace river" });
     act(() => mapMock.events.dispatchEvent(new Event("load")));
+    await armTrace();
     mapClick(screen.getByRole("region", { name: "River map" }));
     expect(await screen.findByText(message)).toBeInTheDocument();
     expect(
@@ -1207,6 +1276,7 @@ describe("measurement explorer", () => {
     await screen.findByRole("button", { name: "Trace river" });
     act(() => mapMock.events.dispatchEvent(new Event("load")));
     const map = screen.getByRole("region", { name: "River map" });
+    await armTrace();
     mapClick(map);
 
     const panel = within(await screen.findByRole("region", { name: "Catchment measurements" }));
@@ -1381,6 +1451,9 @@ describe("measurement explorer", () => {
       "/api/river/upstream-measurements?lon=-1.25000000&lat=52.50000000&release=0123456789abcdef",
     ]);
     const map = screen.getByRole("region", { name: "River map" });
+    expect(screen.getByRole("button", { name: "Trace river", pressed: false })).toBeEnabled();
+    mapClick(map);
+    expect(fetchTrace).toHaveBeenCalledTimes(3);
     const marker = within(map).getByRole("button", { name: /^Shardlow ·/ });
     const details = document.getElementById(marker.getAttribute("aria-controls")!)!;
     expect(within(details).getByRole("heading", { name: "Shardlow" })).toBeInTheDocument();
@@ -1543,17 +1616,15 @@ describe("measurement explorer", () => {
     await enableStations(user);
     act(() => mapMock.events.dispatchEvent(new Event("load")));
     const map = screen.getByRole("region", { name: "River map" });
+    await armTrace();
     mapClick(map);
     await screen.findByRole("region", { name: "Catchment measurements" });
     expect(screen.getByText("Finding measurements")).toBeInTheDocument();
+    await armTrace();
     mapClick(map, -1.2, 52.6);
-    expect(traceKinds()).toEqual(["selected"]);
-    expect(
-      screen.queryByRole("region", { name: "Catchment measurements" }),
-    ).not.toBeInTheDocument();
-    expect(fetchRiver.mock.calls[1][1]?.signal?.aborted).toBe(true);
-    await screen.findByRole("region", { name: "Catchment measurements" });
+    expect(traceKinds()).toContain("catchment");
     expect(await screen.findByText("No matching published measurements")).toBeInTheDocument();
+    expect(fetchRiver.mock.calls[1][1]?.signal?.aborted).toBe(true);
     expect(fetchRiver.mock.calls[3][0]).toBe(
       "/api/river/upstream-measurements?lon=-1.20000000&lat=52.60000000&release=0123456789abcdef",
     );
@@ -1589,6 +1660,7 @@ describe("measurement explorer", () => {
       render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
       await screen.findByRole("button", { name: "Trace river" });
       act(() => mapMock.events.dispatchEvent(new Event("load")));
+      await armTrace();
       mapClick(screen.getByRole("region", { name: "River map" }));
       await screen.findByText("No matching published measurements");
       await waitFor(() => expect(traceKinds()).toContain("catchment"));
@@ -1616,6 +1688,7 @@ describe("measurement explorer", () => {
     render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
     await screen.findByRole("button", { name: "Trace river" });
     act(() => mapMock.events.dispatchEvent(new Event("load")));
+    await armTrace();
     mapClick(screen.getByRole("region", { name: "River map" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Measurement search unavailable");
     await waitFor(() => expect(traceKinds()).toContain("catchment"));
@@ -1642,6 +1715,7 @@ describe("measurement explorer", () => {
     await screen.findByRole("button", { name: "Trace river" });
     act(() => mapMock.events.dispatchEvent(new Event("load")));
     const map = screen.getByRole("region", { name: "River map" });
+    await armTrace();
     mapClick(map);
 
     const panel = await screen.findByRole("region", { name: "Catchment measurements" });
@@ -1676,6 +1750,7 @@ describe("measurement explorer", () => {
     );
     render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
     await screen.findByRole("button", { name: "Trace river" });
+    await armTrace();
     mapClick(screen.getByRole("region", { name: "River map" }));
 
     expect(
@@ -1696,6 +1771,7 @@ describe("measurement explorer", () => {
     vi.stubGlobal("fetch", fetchRiver);
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
     await screen.findByRole("button", { name: "Trace river" });
+    await armTrace();
     mapClick(screen.getByRole("region", { name: "River map" }));
     await screen.findByRole("region", { name: "Catchment measurements" });
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -1721,6 +1797,7 @@ describe("measurement explorer", () => {
     fetchTrace.mockResolvedValueOnce(new Response(null, { status: 504 }));
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
     await screen.findByRole("button", { name: "Trace river" });
+    await armTrace();
     mapClick(screen.getByRole("region", { name: "River map" }));
     expect(fetchTrace.mock.calls[0][0]).toBe(
       "/api/river/trace?lon=-1.25000000&lat=52.50000000&direction=upstream",
@@ -1729,9 +1806,8 @@ describe("measurement explorer", () => {
     expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
     await enableStations(user);
     await user.click(await screen.findByRole("button", { name: /^Kegworth ·/ }));
-    expect(screen.getByRole("button", { name: "Trace from Kegworth" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Select map centre" }));
     expect(fetchTrace.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Trace upstream catchment" }));
     expect(await screen.findByText("River trace timed out")).toBeInTheDocument();
     await act(async () =>
       finishFirst(
@@ -1773,6 +1849,7 @@ describe("measurement explorer", () => {
       render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
       await screen.findByRole("button", { name: "Trace river" });
       act(() => mapMock.events.dispatchEvent(new Event("load")));
+      await armTrace();
       mapClick(screen.getByRole("region", { name: "River map" }));
       expect(await screen.findByText(label)).toBeInTheDocument();
       expect(currentTraceData()?.features).toEqual([
