@@ -6,6 +6,8 @@ import { Button } from "@/components/button";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { inventoryViewport, type InventoryArea, type InventoryStation } from "@/lib/inventory";
 import { MAX_MAP_ZOOM } from "@/lib/map-context";
+import { markerButtonClasses, stationMarkerButton } from "./station-markers";
+import { stationAvailability, type StationMarker } from "@/lib/station-markers";
 
 export const INVENTORY_DEBOUNCE_MS = 400;
 
@@ -68,21 +70,19 @@ export function useViewportInventory(map: MapLibreMap | undefined) {
   return { view, retry: () => setRetry((attempt) => attempt + 1) };
 }
 
-const publishedDot = "rounded-full border-2 border-surface bg-accent-strong";
-const inventoryDot = "rounded-full border-2 border-ink-muted bg-surface";
-const hasPublished = (station: InventoryStation) =>
-  station.measures.some(({ status }) => status === "published");
+export type InventoryMapStation = InventoryStation & { marker: StationMarker };
 
 export function useInventoryMarkers(
   renderer: { map: MapLibreMap; library: typeof import("maplibre-gl") } | undefined,
-  stations: readonly InventoryStation[] | undefined,
+  stations: readonly InventoryMapStation[],
   onSelect: (station: InventoryStation) => void,
   onBrowse: () => void,
+  detailsId: string,
 ) {
   useEffect(() => {
-    if (!renderer || !stations?.length) return;
+    if (!renderer || !stations.length) return;
     const { map, library } = renderer;
-    const cells = new Map<string, InventoryStation[]>();
+    const cells = new Map<string, InventoryMapStation[]>();
     for (const station of stations) {
       const { longitude, latitude } = station.position;
       const { x, y } = map.project([longitude, latitude]);
@@ -95,33 +95,29 @@ export function useInventoryMarkers(
       const [station] = group;
       const { longitude, latitude } = station.position;
       const point: [number, number] = [longitude, latitude];
+      if (group.length === 1) {
+        const button = stationMarkerButton(station.name, station.marker);
+        button.setAttribute("aria-controls", detailsId);
+        button.onclick = () => onSelect(station);
+        return new library.Marker({ element: button }).setLngLat(point).addTo(map);
+      }
       const button = document.createElement("button");
       button.type = "button";
-      button.className =
-        "grid size-11 cursor-pointer place-items-center rounded-full focus-visible:bg-accent-soft";
-      if (group.length === 1) {
-        const dot = document.createElement("span");
-        dot.className = `size-4 shadow-md ${hasPublished(station) ? publishedDot : inventoryDot}`;
-        button.append(dot);
-        button.title = `${station.name} · ${hasPublished(station) ? "Published by RDP" : "Provider inventory"}`;
-        button.setAttribute("aria-label", button.title);
-        button.onclick = () => onSelect(station);
-      } else {
-        const count = document.createElement("span");
-        count.className =
-          "grid size-8 place-items-center rounded-full border border-line-strong bg-surface text-sm font-semibold text-ink shadow-md";
-        count.textContent = String(group.length);
-        button.append(count);
-        button.setAttribute("aria-label", `${group.length} stations`);
-        button.onclick = () => {
-          if (map.getZoom() >= MAX_MAP_ZOOM) onBrowse();
-          else map.easeTo({ center: point, zoom: Math.min(MAX_MAP_ZOOM, map.getZoom() + 2) });
-        };
-      }
+      button.className = markerButtonClasses;
+      const count = document.createElement("span");
+      count.className =
+        "grid size-8 place-items-center rounded-full border border-line-strong bg-surface text-sm font-semibold text-ink shadow-md";
+      count.textContent = String(group.length);
+      button.append(count);
+      button.setAttribute("aria-label", `${group.length} stations`);
+      button.onclick = () => {
+        if (map.getZoom() >= MAX_MAP_ZOOM) onBrowse();
+        else map.easeTo({ center: point, zoom: Math.min(MAX_MAP_ZOOM, map.getZoom() + 2) });
+      };
       return new library.Marker({ element: button }).setLngLat(point).addTo(map);
     });
     return () => markers.forEach((marker) => marker.remove());
-  }, [renderer, stations, onSelect, onBrowse]);
+  }, [renderer, stations, onSelect, onBrowse, detailsId]);
 }
 
 const freshnessLabels = {
@@ -141,12 +137,14 @@ const dateFormat = new Intl.DateTimeFormat("en-GB", {
 
 export function InventoryPanel({
   view,
+  visibleStations,
   retry,
   selected,
   onSelect,
   browse,
 }: {
   view: InventoryView;
+  visibleStations: readonly InventoryMapStation[];
   retry: () => void;
   selected?: InventoryStation;
   onSelect: (station: InventoryStation) => void;
@@ -190,20 +188,14 @@ export function InventoryPanel({
     <div className="space-y-2 text-sm">
       {stations.length === 0 ? (
         <EmptyState title="No stations from available inventories in this map area" />
+      ) : visibleStations.length === 0 ? (
+        <EmptyState title="No provider stations match the map filters" />
       ) : (
         <>
           <p role="status">
-            {stations.length} provider {stations.length === 1 ? "station" : "stations"} shown.
-            {truncated ? " Results are limited. Zoom in to see more stations." : null}
+            {visibleStations.length} provider{" "}
+            {visibleStations.length === 1 ? "station" : "stations"} shown.
           </p>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-ink-muted">
-            <span className="inline-flex items-center gap-1.5">
-              <span aria-hidden="true" className={`size-4 ${publishedDot}`} /> Published by RDP
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span aria-hidden="true" className={`size-4 ${inventoryDot}`} /> Provider inventory
-            </span>
-          </div>
           <details ref={list}>
             <summary className="cursor-pointer py-2 underline">
               Browse stations in this map area
@@ -213,20 +205,23 @@ export function InventoryPanel({
               <select
                 ref={picker}
                 className="min-h-11 w-full rounded-md border border-line-input bg-surface px-2"
-                value={selected?.key ?? ""}
+                value={
+                  visibleStations.some(({ key }) => key === selected?.key) ? selected?.key : ""
+                }
                 onChange={(event) => {
-                  const station = stations.find(({ key }) => key === event.target.value);
+                  const station = visibleStations.find(({ key }) => key === event.target.value);
                   if (station) onSelect(station);
                 }}
               >
                 <option value="" disabled>
                   Select a station
                 </option>
-                {stations.map((station) => (
+                {visibleStations.map((station) => (
                   <option key={station.key} value={station.key}>
                     {station.name}
                     {station.watercourse ? ` · ${station.watercourse}` : ""}
-                    {hasPublished(station) ? " · Published by RDP" : ""}
+                    {" · "}
+                    {stationAvailability[station.marker.availability]}
                   </option>
                 ))}
               </select>
@@ -234,6 +229,7 @@ export function InventoryPanel({
           </details>
         </>
       )}
+      {truncated ? <p>Results are limited. Zoom in to see more stations.</p> : null}
       <details className="text-ink-muted">
         <summary className="cursor-pointer py-2 underline">Provider inventory coverage</summary>
         <p>The inventory covers part of Great Britain’s monitoring network.</p>
