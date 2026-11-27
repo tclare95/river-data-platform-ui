@@ -17,7 +17,6 @@ export type MapContext = {
   station?: string;
   inventory?: string;
   showStations?: boolean;
-  tracing?: boolean;
   view?: { center: [number, number]; zoom: number };
   trace?: {
     point: [number, number];
@@ -46,7 +45,6 @@ export function readMapContext(params: SearchParams): MapContext {
   const traceLat = decimal(get("traceLat"), -90, 90);
   const direction = get("direction");
   const hidden = get("hide");
-  const tracing = get("tracing") === "off" ? false : undefined;
 
   return {
     station: typeof station === "string" && /^[\w.:-]{1,128}$/.test(station) ? station : undefined,
@@ -57,13 +55,11 @@ export function readMapContext(params: SearchParams): MapContext {
         ? inventory
         : undefined,
     showStations: toggle(get("stations")),
-    tracing,
     view:
       lon !== undefined && lat !== undefined && (get("zoom") === undefined || zoom !== undefined)
         ? { center: [lon, lat], zoom: zoom ?? LOCATION_ZOOM }
         : undefined,
     trace:
-      tracing !== false &&
       traceLon !== undefined &&
       traceLat !== undefined &&
       (direction === "upstream" || direction === "downstream")
@@ -89,19 +85,13 @@ export function mapViewParams(view?: MapContext["view"]) {
   };
 }
 
-export function mapSelectionParams({
-  station,
-  inventory,
-  showStations,
-  tracing,
-  trace,
-}: MapContext) {
+export function mapSelectionParams({ station, inventory, showStations, trace }: MapContext) {
   const hidden = trace?.hiddenRoutes;
   return {
     station,
     inventory,
     stations: showStations === undefined ? undefined : showStations ? "show" : "hide",
-    tracing: tracing === false ? "off" : undefined,
+    tracing: undefined, // Drop the legacy mode parameter when writing Explorer state.
     traceLon: trace?.point[0].toFixed(8),
     traceLat: trace?.point[1].toFixed(8),
     direction: trace?.direction,
