@@ -7,7 +7,9 @@ import type { Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import { Button } from "@/components/button";
 import { CatchmentMeasurements, type CatchmentDiscovery } from "./catchment-measurements";
 import { InventoryPanel, useInventoryMarkers, useViewportInventory } from "./inventory-map";
+import { StationMarkerControls, stationMarkerButton } from "./station-markers";
 import type { InventoryStation } from "@/lib/inventory";
+import { classifyStation, matchesStation, type StationFilters } from "@/lib/station-markers";
 import type { OverviewItem } from "@/lib/overview";
 import { ObservationSummaryDisclosure } from "./observation-summary-disclosure";
 import {
@@ -121,6 +123,7 @@ export function StationMap({
   }>();
   const [status, setStatus] = useState<"loading" | "ready" | "tiles" | "unavailable">("loading");
   const [selectedId, select] = useState(initialStationId);
+  const [filters, setFilters] = useState<StationFilters>({ type: "", availability: "" });
   const [inventoryKey, selectInventoryKey] = useState(initialContext.inventory);
   const [browseInventory, setBrowseInventory] = useState(0);
   const showInventoryPicker = useCallback(() => setBrowseInventory((value) => value + 1), []);
@@ -381,23 +384,6 @@ export function StationMap({
       ),
     [inventoryStations],
   );
-  const inventoryMarkers = useMemo(() => {
-    const catchmentIds = new Set(
-      matchedStations?.flatMap(({ measurements }) =>
-        measurements.filter(({ position }) => position).map(({ measurementId }) => measurementId),
-      ),
-    );
-    return inventoryStations?.filter(
-      ({ measures }) =>
-        !measures.some(({ measurementId }) => measurementId && catchmentIds.has(measurementId)),
-    );
-  }, [inventoryStations, matchedStations]);
-  useInventoryMarkers(
-    unavailable ? undefined : renderer,
-    inventoryMarkers,
-    selectInventory,
-    showInventoryPicker,
-  );
   const publishedMeasurements = useMemo(
     () =>
       new Map([
@@ -407,6 +393,58 @@ export function StationMap({
         ),
       ]),
     [items, matchedStations],
+  );
+  const { inventoryWithMarkers, markersByStation } = useMemo(() => {
+    const publishedByStation = new Map<string, PublicMeasurement[]>();
+    for (const measurement of publishedMeasurements.values()) {
+      const group = publishedByStation.get(measurement.stationId) ?? [];
+      group.push(measurement);
+      publishedByStation.set(measurement.stationId, group);
+    }
+    const inventoryByStation = new Map<string, InventoryStation["measures"]>();
+    // Join the feeds by published IDs, which can link to a group containing additional types.
+    const inventoryWithMarkers = (inventoryStations ?? []).map((station) => {
+      const linkedStationIds = new Set(
+        station.measures.flatMap(({ measurementId }) => {
+          const measurement = measurementId && publishedMeasurements.get(measurementId);
+          return measurement ? [measurement.stationId] : [];
+        }),
+      );
+      for (const id of linkedStationIds) {
+        inventoryByStation.set(id, [...(inventoryByStation.get(id) ?? []), ...station.measures]);
+      }
+      const published = [...linkedStationIds].flatMap((id) => publishedByStation.get(id) ?? []);
+      return { ...station, marker: classifyStation(published, station.measures) };
+    });
+    const markersByStation = new Map(
+      [...publishedByStation].map(([id, measurements]) => [
+        id,
+        classifyStation(measurements, inventoryByStation.get(id)),
+      ]),
+    );
+    return { inventoryWithMarkers, markersByStation };
+  }, [inventoryStations, publishedMeasurements]);
+  const visibleInventory = useMemo(
+    () => inventoryWithMarkers.filter(({ marker }) => matchesStation(marker, filters)),
+    [inventoryWithMarkers, filters],
+  );
+  const inventoryMarkers = useMemo(() => {
+    const catchmentIds = new Set(
+      matchedStations?.flatMap(({ measurements }) =>
+        measurements.filter(({ position }) => position).map(({ measurementId }) => measurementId),
+      ),
+    );
+    return visibleInventory.filter(
+      ({ measures }) =>
+        !measures.some(({ measurementId }) => measurementId && catchmentIds.has(measurementId)),
+    );
+  }, [visibleInventory, matchedStations]);
+  useInventoryMarkers(
+    unavailable ? undefined : renderer,
+    inventoryMarkers,
+    selectInventory,
+    showInventoryPicker,
+    detailsId,
   );
   useEffect(() => {
     if (!map || unavailable) return;
@@ -499,26 +537,20 @@ export function StationMap({
   useEffect(() => {
     if (!renderer || unavailable) return;
     const { map, library } = renderer;
-    const visible = mappedStations.filter(
-      ({ stationId, match, measurements }) =>
+    const markers = mappedStations.flatMap(({ stationId, name, position, match, measurements }) => {
+      const marker = markersByStation.get(stationId) ?? classifyStation(measurements);
+      const shown =
         match ||
         (showStations &&
           (stationId === selectedId ||
             (filteredStationIds.has(stationId) &&
               !measurements.some(({ measurementId }) =>
                 inventoryMeasurementIds.has(measurementId),
-              )))),
-    );
-    const markers = visible.map(({ stationId, name, position, match }) => {
+              ))));
+      if (!shown || !matchesStation(marker, filters)) return [];
       const point: [number, number] = [position.longitude, position.latitude];
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className =
-        "grid size-11 cursor-pointer place-items-center rounded-full focus-visible:bg-accent-soft after:rounded-full after:border-2 after:border-surface after:bg-accent-strong after:shadow-md " +
-        (match ? "after:size-5 after:ring-2 after:ring-accent-strong" : "after:size-4");
-      button.setAttribute("aria-label", match ? `${name}, inside the modelled catchment` : name);
+      const button = stationMarkerButton(name, marker, match);
       button.setAttribute("aria-controls", detailsId);
-      button.title = name;
       button.onclick = () => {
         if (heading.current?.dataset.stationId === stationId) heading.current.focus();
         else focusSelection.current = true;
@@ -526,13 +558,15 @@ export function StationMap({
         selectInventoryKey(undefined);
         select(stationId);
       };
-      return new library.Marker({ element: button }).setLngLat(point).addTo(map);
+      return [new library.Marker({ element: button }).setLngLat(point).addTo(map)];
     });
     return () => markers.forEach((marker) => marker.remove());
   }, [
     detailsId,
     renderer,
     mappedStations,
+    markersByStation,
+    filters,
     inventoryMeasurementIds,
     unavailable,
     filteredStationIds,
@@ -635,8 +669,10 @@ export function StationMap({
           {showStations && !stations.some(({ stationId }) => filteredStationIds.has(stationId)) ? (
             <p className="text-sm text-ink-muted">No matching stations have verified locations</p>
           ) : null}
+          <StationMarkerControls filters={filters} onChange={setFilters} />
           <InventoryPanel
             view={inventory.view}
+            visibleStations={visibleInventory}
             retry={inventory.retry}
             selected={inventorySelected}
             onSelect={selectInventory}
