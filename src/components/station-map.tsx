@@ -134,9 +134,7 @@ export function StationMap({
   const [collapsed, setCollapsed] = useState(false);
   const [browseInventory, setBrowseInventory] = useState(0);
   const showInventoryPicker = useCallback(() => setBrowseInventory((value) => value + 1), []);
-  const [showStations, setShowStations] = useState(
-    initialContext.showStations ?? !!initialStationId,
-  );
+  const [showStations, setShowStations] = useState(initialContext.showStations ?? true);
   const [choosingTracePoint, setChoosingTracePoint] = useState(false);
   const [tracePending, setTracePending] = useState(false);
   const [direction, setDirection] = useState<RiverDirection>(initialTrace?.direction ?? "upstream");
@@ -554,7 +552,7 @@ export function StationMap({
     const params = mapSelectionParams({
       station: sharedStationId,
       inventory: inventoryKey,
-      showStations: showStations === !!sharedStationId ? undefined : showStations,
+      showStations: showStations ? undefined : false,
       trace: point
         ? { point, direction, showCatchment: sharedCatchment, bothDirections, hiddenRoutes }
         : undefined,
@@ -827,7 +825,9 @@ export function StationMap({
                 ? "Tracing river…"
                 : null}
           </p>
-          {showStations && !stations.some(({ stationId }) => filteredStationIds.has(stationId)) ? (
+          {showStations &&
+          stations.length > 0 &&
+          !stations.some(({ stationId }) => filteredStationIds.has(stationId)) ? (
             <p className="text-sm text-ink-muted">No matching stations have verified locations</p>
           ) : null}
           <StationMarkerControls filters={filters} onChange={setFilters} />
