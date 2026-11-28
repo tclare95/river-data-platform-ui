@@ -41,8 +41,8 @@ export type RainfallTotal = HistoryWindow & {
 };
 
 /** RDP's query is by label [from, to). A verified end-label at the chart end can close the last period. */
-export function rainfallReadWindow(window: HistoryWindow): HistoryWindow {
-  return { from: iso(epochMs(window.from) - 7 * DAY), to: iso(epochMs(window.to) + 1) };
+export function rainfallReadWindow(window: HistoryWindow, lookbackDays = 7): HistoryWindow {
+  return { from: iso(epochMs(window.from) - lookbackDays * DAY), to: iso(epochMs(window.to) + 1) };
 }
 
 function gridTime(timestamp: string, stride: number) {
@@ -137,6 +137,10 @@ function rainfallAccumulator(history: RainfallResult) {
       status: used === 0 ? "unavailable" : used === expected ? "complete" : "partial",
     };
   };
+}
+
+export function rainfallWindowTotal(history: RainfallResult, { from, to }: HistoryWindow) {
+  return rainfallAccumulator(history)(epochMs(from), epochMs(to));
 }
 
 export function rainfallSummaries(history: RainfallResult) {

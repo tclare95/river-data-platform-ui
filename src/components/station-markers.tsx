@@ -38,6 +38,7 @@ export function stationMarkerButton(
   { type, parameters, availability }: StationMarker,
   catchment = false,
   selected = false,
+  label?: string,
 ) {
   const button = document.createElement("button");
   button.type = "button";
@@ -49,6 +50,15 @@ export function stationMarkerButton(
       ? `Multiple types (${parameters.map((parameter) => (parameter === "level" || parameter === "flow" || parameter === "rainfall" ? measurementTypes[parameter] : parameter)).join(", ")})`
       : measurementTypes[type];
   button.title = `${name} · ${types} · ${stationAvailability[availability]}${catchment ? " · Inside the modelled catchment" : ""}`;
+  if (label) {
+    button.title += ` · ${label}`;
+    const annotation = document.createElement("span");
+    annotation.className =
+      "absolute top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded border border-line bg-surface px-1.5 py-0.5 text-xs font-semibold text-ink shadow-sm";
+    annotation.textContent = label;
+    annotation.setAttribute("aria-hidden", "true");
+    button.append(annotation);
+  }
   button.setAttribute("aria-label", button.title);
 
   const symbol = document.createElement("span");

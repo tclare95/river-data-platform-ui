@@ -27,6 +27,7 @@ export function StationSelection({
   onToggle,
   onClose,
   comparisonAction,
+  summary,
   children,
 }: {
   selectionKey: string;
@@ -39,6 +40,7 @@ export function StationSelection({
   onToggle: () => void;
   onClose: () => void;
   comparisonAction: (measurement: PublicMeasurement) => ReactNode;
+  summary?: ReactNode;
   children: ReactNode;
 }) {
   const headingId = useId();
@@ -77,6 +79,7 @@ export function StationSelection({
             className="m-2 border-0 px-2 py-1 sm:px-2"
           />
         )}
+        {summary && <div className="border-b border-line px-3 py-2">{summary}</div>}
         {measures.length ? (
           <ul className="divide-y divide-line">
             {measures.map(({ key, label, measurementId, measurement, latest, availability }) => (

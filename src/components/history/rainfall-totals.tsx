@@ -9,6 +9,7 @@ import {
   type RainfallMode,
   type RainfallTotal,
 } from "@/lib/history/rainfall-totals";
+import type { HistoryWindow } from "@/lib/history/range";
 import { epochMs } from "@/lib/rdp/contract";
 
 export function RainfallModeControl({
@@ -40,6 +41,15 @@ function utc(timestamp: string) {
   return timestamp.slice(0, 16).replace("T", " ");
 }
 
+export function RainfallWindowLabel({ window }: { window: HistoryWindow }) {
+  return (
+    <span className="block text-ink-muted">
+      <time dateTime={window.from}>{utc(window.from)}</time> to{" "}
+      <time dateTime={window.to}>{utc(window.to)}</time> UTC
+    </span>
+  );
+}
+
 export function RainfallTotalValue({
   total,
   showWindow = false,
@@ -51,12 +61,7 @@ export function RainfallTotalValue({
     <>
       <span>{rainfallDepth(total.totalMm)}</span>
       <span className="block text-ink-muted">{rainfallTotalCoverage(total)}</span>
-      {showWindow ? (
-        <span className="block text-ink-muted">
-          <time dateTime={total.from}>{utc(total.from)}</time> to{" "}
-          <time dateTime={total.to}>{utc(total.to)}</time> UTC
-        </span>
-      ) : null}
+      {showWindow ? <RainfallWindowLabel window={total} /> : null}
     </>
   );
 }
