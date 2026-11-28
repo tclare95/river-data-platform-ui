@@ -90,7 +90,10 @@ export function useViewportInventory(
   return { view, retry: () => setRetry((attempt) => attempt + 1) };
 }
 
-export type InventoryMapStation = InventoryStation & { marker: StationMarker };
+export type InventoryMapStation = InventoryStation & {
+  marker: StationMarker;
+  rainfallIds: readonly string[];
+};
 
 export function useInventoryMarkers(
   renderer: { map: MapLibreMap; library: typeof import("maplibre-gl") } | undefined,
@@ -99,6 +102,7 @@ export function useInventoryMarkers(
   onBrowse: () => void,
   detailsId: string,
   selectedKey: string | undefined,
+  rainfallLabel?: (station: InventoryMapStation) => string | undefined,
 ) {
   useEffect(() => {
     if (!renderer || !stations.length) return;
@@ -108,7 +112,9 @@ export function useInventoryMarkers(
       const { longitude, latitude } = station.position;
       const { x, y } = map.project([longitude, latitude]);
       const cell =
-        station.key === selectedKey ? "selected" : `${Math.floor(x / 52)}:${Math.floor(y / 52)}`;
+        station.key === selectedKey || (rainfallLabel && station.rainfallIds.length)
+          ? station.key
+          : `${Math.floor(x / 52)}:${Math.floor(y / 52)}`;
       const group = cells.get(cell);
       if (group) group.push(station);
       else cells.set(cell, [station]);
@@ -123,6 +129,7 @@ export function useInventoryMarkers(
           station.marker,
           false,
           station.key === selectedKey,
+          rainfallLabel?.(station),
         );
         button.setAttribute("aria-controls", detailsId);
         button.onclick = (event) => {
@@ -148,7 +155,7 @@ export function useInventoryMarkers(
       return new library.Marker({ element: button }).setLngLat(point).addTo(map);
     });
     return () => markers.forEach((marker) => marker.remove());
-  }, [renderer, stations, onSelect, onBrowse, detailsId, selectedKey]);
+  }, [renderer, stations, onSelect, onBrowse, detailsId, selectedKey, rainfallLabel]);
 }
 
 const freshnessLabels = {

@@ -48,6 +48,7 @@ vi.mock("maplibre-gl", () => ({
     getContainer = () => this.options.container;
     getCenter = () => ({ wrap: () => ({ lng: -1.3, lat: 52.8 }) });
     getZoom = () => mapMock.zoom;
+    isMoving = () => false;
     getBounds = () => ({
       getWest: () => mapMock.bounds[0],
       getSouth: () => mapMock.bounds[1],
@@ -331,6 +332,165 @@ describe("measurement explorer", () => {
       mapMock.events.dispatchEvent(new Event("moveend"));
     });
   }
+
+  function rainfallResponse(id: string, totalMm: number) {
+    const window = { from: "2026-11-27T12:00:00.000Z", to: "2026-11-28T12:00:00.000Z" };
+    return Response.json({
+      window,
+      readings: {
+        [id]: {
+          status: "total",
+          total: {
+            ...window,
+            totalMm,
+            status: "partial",
+            basis: "verified",
+            used: 4,
+            expected: 96,
+          },
+        },
+      },
+    });
+  }
+
+  it("labels a published gauge joined through inventory and keeps discoverable gauges distinct", async () => {
+    const stone = providerStation("Stone inventory", -1.3);
+    stone.measures = [
+      {
+        parameter: "rainfall",
+        qualifier: null,
+        status: "published",
+        measurementId: "ea-stone-rainfall",
+      },
+    ];
+    const rainfall = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => rainfallResponse("ea-stone-rainfall", 2.5));
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockImplementation(async (url, init) =>
+          String(url).startsWith("/api/discovery/area")
+            ? inventoryResponse([stone, providerStation("Rain Lane", -1.05)])
+            : rainfall(url, init),
+        ),
+    );
+
+    render(<MeasurementExplorer items={items} />);
+    await readyTrace();
+    moveArea([-1.5, 52.5, -1, 53]);
+    openPanel("Layers");
+    const period = screen.getByRole("combobox", { name: "Rainfall accumulation" });
+    expect(
+      within(period)
+        .getAllByRole("option")
+        .map(({ textContent }) => textContent),
+    ).toEqual(["Off", "24 hours", "72 hours", "7 days"]);
+    expect(rainfall).not.toHaveBeenCalled();
+    fireEvent.change(period, { target: { value: "24h" } });
+
+    const map = within(screen.getByRole("region", { name: "River map" }));
+    const marker = await map.findByRole("button", {
+      name: "Stone inventory · Rainfall · Published by RDP · Partial 2.5 mm",
+    });
+    expect(marker).toHaveTextContent("Partial 2.5 mm");
+    const discoverable = { name: "Rain Lane · Rainfall · Discoverable only" };
+    expect(map.getByRole("button", discoverable)).toBeVisible();
+    expect(rainfall).toHaveBeenCalledExactlyOnceWith(
+      "/api/measurements/rainfall-map?period=24h&id=ea-stone-rainfall",
+      { signal: expect.any(AbortSignal) },
+    );
+
+    fireEvent.click(marker);
+    const selection = within(screen.getByRole("region", { name: "Stone inventory" }));
+    expect(selection.getByText("Rainfall accumulation · 24 hours")).toBeVisible();
+    expect(selection.getByText("2.5 mm")).toBeVisible();
+    expect(
+      selection.getByText("Partial · 4/96 expected intervals with verified timing"),
+    ).toBeVisible();
+    expect(selection.getByText("2026-11-27 12:00")).toHaveAttribute(
+      "datetime",
+      "2026-11-27T12:00:00.000Z",
+    );
+    expect(selection.getByText("2026-11-28 12:00")).toHaveAttribute(
+      "datetime",
+      "2026-11-28T12:00:00.000Z",
+    );
+    fireEvent.click(map.getByRole("button", discoverable));
+    expect(screen.getByText("No rainfall observations published by RDP")).toBeVisible();
+  });
+
+  it("bounds rainfall reads to the closest visible measurements and ignores late period and region results", async () => {
+    const stone = items.find(
+      ({ measurement }) => measurement.measurementId === "ea-stone-rainfall",
+    )!;
+    const rainAt = (id: string, longitude: number): OverviewItem => ({
+      ...stone,
+      measurement: {
+        ...stone.measurement,
+        name: id,
+        measurementId: id,
+        stationId: id,
+        position: { latitude: 52.75, longitude, precisionMetres: 10 },
+      },
+    });
+    const gauges = [
+      rainAt("rain-a", -1.25),
+      rainAt("rain-b", -1.24),
+      rainAt("rain-c", -1.23),
+      rainAt("rain-d", -1.22),
+      rainAt("rain-e", -1.01),
+      rainAt("rain-f", -2.25),
+    ];
+    const pending: {
+      params: URLSearchParams;
+      signal?: AbortSignal | null;
+      finish: (response: Response) => void;
+    }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
+        const path = new URL(String(url), location.origin);
+        if (path.pathname === "/api/discovery/area") return inventoryResponse([]);
+        return new Promise<Response>((finish) =>
+          pending.push({ params: path.searchParams, signal: init?.signal, finish }),
+        );
+      }),
+    );
+
+    render(<MeasurementExplorer items={gauges} />);
+    await readyTrace();
+    moveArea([-1.5, 52.5, -1, 53]);
+    openPanel("Layers");
+    const period = screen.getByRole("combobox", { name: "Rainfall accumulation" });
+    fireEvent.change(period, { target: { value: "24h" } });
+    await waitFor(() => expect(pending).toHaveLength(1));
+    expect(pending[0].params.getAll("id")).toEqual(["rain-a", "rain-b", "rain-c", "rain-d"]);
+    expect(screen.getByText(/Showing up to four rainfall totals/)).toBeVisible();
+
+    fireEvent.change(period, { target: { value: "72h" } });
+    expect(pending[0].signal?.aborted).toBe(true);
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(pending[1].params.get("period")).toBe("72h");
+    moveArea([-2.5, 52.5, -2, 53]);
+    expect(pending[1].signal?.aborted).toBe(true);
+    await waitFor(() => expect(pending).toHaveLength(3));
+    expect(pending[2].params.getAll("id")).toEqual(["rain-f"]);
+    expect(pending[2].params.get("period")).toBe("72h");
+
+    await act(async () => {
+      pending[2].finish(rainfallResponse("rain-f", 1));
+      pending[1].finish(rainfallResponse("rain-a", 88));
+      pending[0].finish(rainfallResponse("rain-a", 99));
+    });
+    const map = within(screen.getByRole("region", { name: "River map" }));
+    expect(map.getByRole("button", { name: /rain-f.*Partial 1 mm/ })).toBeVisible();
+    expect(map.queryByRole("button", { name: /88 mm|99 mm/ })).not.toBeInTheDocument();
+
+    fireEvent.change(period, { target: { value: "7d" } });
+    expect(map.queryByRole("button", { name: /rain-f.*1 mm/ })).not.toBeInTheDocument();
+  });
 
   it("debounces bounded map reads, aborts a superseded read and ignores its late result", async () => {
     let finishOld!: (response: Response) => void;

@@ -23,6 +23,13 @@ import {
   useViewportInventory,
 } from "./inventory-map";
 import { StationMarkerControls, stationMarkerButton } from "./station-markers";
+import { RainfallMapDetails, rainfallMarkerLabel, useRainfallMap } from "./rainfall-map";
+import {
+  isRainfall,
+  isRainfallTotal,
+  RAINFALL_MAP_PERIODS,
+  type RainfallMapPeriod,
+} from "@/lib/rainfall-map";
 import { inventoryViewport, type InventoryStation } from "@/lib/inventory";
 import { classifyStation, matchesStation, type StationFilters } from "@/lib/station-markers";
 import type { OverviewItem } from "@/lib/overview";
@@ -100,6 +107,25 @@ type MapStation = Omit<LocatedStation, "items"> & {
   measurements: readonly PublicMeasurement[];
   match: boolean;
 };
+
+function inventoryRainfall(
+  station: InventoryStation,
+  published: ReadonlyMap<string, PublicMeasurement>,
+) {
+  const rainfallMeasures = station.measures.filter(
+    ({ parameter, measurementId }) =>
+      isRainfall(parameter) ||
+      (measurementId && isRainfall(published.get(measurementId)?.parameter ?? null)),
+  );
+  const linked = rainfallMeasures.flatMap(({ measurementId }) => {
+    const measurement = measurementId && published.get(measurementId);
+    return measurement && isRainfallTotal(measurement) ? [measurement] : [];
+  });
+  return {
+    rainfallIds: [...new Set(linked.map(({ measurementId }) => measurementId))],
+    rainfallMarker: classifyStation(linked, rainfallMeasures),
+  };
+}
 
 export function StationMap({
   stations,
@@ -188,6 +214,8 @@ export function StationMap({
     setBrowseInventory((value) => value + 1);
   }, [setPanel]);
   const [showStations, setShowStations] = useState(initialContext.showStations ?? true);
+  const [rainfallPeriod, setRainfallPeriod] = useState<RainfallMapPeriod | "">("");
+  const rainfallEnabled = rainfallPeriod !== "";
   const [tracePending, setTracePending] = useState(false);
   const [direction, setDirection] = useState<RiverDirection>(initialTrace?.direction ?? "upstream");
   const [trace, setTrace] = useState<Trace | undefined>(() =>
@@ -602,7 +630,14 @@ export function StationMap({
         inventoryByStation.set(id, [...(inventoryByStation.get(id) ?? []), ...station.measures]);
       }
       const published = [...linkedStationIds].flatMap((id) => publishedByStation.get(id) ?? []);
-      return { ...station, marker: classifyStation(published, station.measures) };
+      const rain = inventoryRainfall(station, publishedMeasurements);
+      return {
+        ...station,
+        rainfallIds: rain.rainfallIds,
+        marker: rainfallEnabled
+          ? rain.rainfallMarker
+          : classifyStation(published, station.measures),
+      };
     });
     const markersByStation = new Map(
       [...publishedByStation].map(([id, measurements]) => [
@@ -611,32 +646,55 @@ export function StationMap({
       ]),
     );
     return { inventoryWithMarkers, markersByStation };
-  }, [inventoryStations, publishedMeasurements]);
+  }, [inventoryStations, publishedMeasurements, rainfallEnabled]);
+  const inventorySelectionRain = useMemo(
+    () => inventorySelected && inventoryRainfall(inventorySelected, publishedMeasurements),
+    [inventorySelected, publishedMeasurements],
+  );
   const visibleInventory = useMemo(
     () =>
-      inventoryWithMarkers.filter(
-        ({ marker }) =>
-          (showStations || marker.availability !== "published") && matchesStation(marker, filters),
+      inventoryWithMarkers.filter(({ marker }) =>
+        rainfallEnabled
+          ? marker.type === "rainfall"
+          : (showStations || marker.availability !== "published") &&
+            matchesStation(marker, filters),
       ),
-    [inventoryWithMarkers, filters, showStations],
+    [inventoryWithMarkers, filters, showStations, rainfallEnabled],
   );
   const inventoryMarkers = useMemo(() => {
     const preferredIds = new Set(
       mappedStations.flatMap(({ match, stationId, measurements }) =>
-        match || stationId === selectedId
-          ? measurements.map(({ measurementId }) => measurementId)
-          : [],
+        rainfallEnabled
+          ? measurements.filter(isRainfallTotal).map(({ measurementId }) => measurementId)
+          : match || stationId === selectedId
+            ? measurements.map(({ measurementId }) => measurementId)
+            : [],
       ),
     );
     const markers = visibleInventory.filter(
-      ({ key, measures }) =>
+      ({ key, measures, rainfallIds }) =>
         key === inventoryKey ||
-        !measures.some(({ measurementId }) => measurementId && preferredIds.has(measurementId)),
+        (rainfallEnabled
+          ? !rainfallIds.some((id) => preferredIds.has(id))
+          : !measures.some(
+              ({ measurementId }) => measurementId && preferredIds.has(measurementId),
+            )),
     );
     if (inventorySelected && !markers.some(({ key }) => key === inventoryKey)) {
-      const marker = classifyStation([], inventorySelected.measures);
-      if ((showStations || marker.availability !== "published") && matchesStation(marker, filters))
-        markers.push({ ...inventorySelected, marker });
+      const marker =
+        rainfallEnabled && inventorySelectionRain
+          ? inventorySelectionRain.rainfallMarker
+          : classifyStation([], inventorySelected.measures);
+      if (
+        rainfallEnabled
+          ? marker.type === "rainfall"
+          : (showStations || marker.availability !== "published") && matchesStation(marker, filters)
+      )
+        markers.push({
+          ...inventorySelected,
+          marker,
+          rainfallIds: inventorySelectionRain?.rainfallIds ?? [],
+        });
     }
     return markers;
   }, [
@@ -645,17 +703,64 @@ export function StationMap({
     selectedId,
     inventoryKey,
     inventorySelected,
+    inventorySelectionRain,
     filters,
     showStations,
+    rainfallEnabled,
   ]);
   const inventoryMeasurementIds = useMemo(
     () =>
       new Set(
-        inventoryMarkers.flatMap(({ measures }) =>
-          measures.flatMap(({ measurementId }) => (measurementId ? [measurementId] : [])),
+        inventoryMarkers.flatMap(({ measures, rainfallIds }) =>
+          rainfallEnabled
+            ? rainfallIds
+            : measures.flatMap(({ measurementId }) => (measurementId ? [measurementId] : [])),
         ),
       ),
-    [inventoryMarkers],
+    [inventoryMarkers, rainfallEnabled],
+  );
+  const visibleMappedStations = useMemo(
+    () =>
+      mappedStations.flatMap((station) => {
+        const { stationId, match, measurements } = station;
+        const rain = measurements.filter(isRainfallTotal);
+        const rainfallIds = rain.map(({ measurementId }) => measurementId);
+        const marker = rainfallEnabled
+          ? classifyStation(rain)
+          : (markersByStation.get(stationId) ?? classifyStation(measurements));
+        const representedByInventory = (rainfallEnabled ? rain : measurements).some(
+          ({ measurementId }) => inventoryMeasurementIds.has(measurementId),
+        );
+        const shown =
+          !representedByInventory &&
+          (rainfallEnabled
+            ? rainfallIds.length > 0
+            : (match ||
+                (showStations &&
+                  (stationId === selectedId || filteredStationIds.has(stationId)))) &&
+              matchesStation(marker, filters));
+        return shown ? [{ ...station, marker, rainfallIds }] : [];
+      }),
+    [
+      mappedStations,
+      rainfallEnabled,
+      markersByStation,
+      inventoryMeasurementIds,
+      showStations,
+      selectedId,
+      filteredStationIds,
+      filters,
+    ],
+  );
+  const rainfallGauges = useMemo(
+    () => [...visibleMappedStations, ...inventoryMarkers],
+    [visibleMappedStations, inventoryMarkers],
+  );
+  const rainfall = useRainfallMap(unavailable ? undefined : map, rainfallPeriod, rainfallGauges);
+  const inventoryRainfallLabel = useCallback(
+    ({ rainfallIds }: { rainfallIds: readonly string[] }) =>
+      rainfallMarkerLabel(rainfallIds, rainfall),
+    [rainfall],
   );
   useInventoryMarkers(
     unavailable ? undefined : renderer,
@@ -664,6 +769,7 @@ export function StationMap({
     showInventoryPicker,
     detailsId,
     inventoryKey,
+    rainfallEnabled ? inventoryRainfallLabel : undefined,
   );
   useEffect(() => {
     if (!map || unavailable) return;
@@ -767,47 +873,43 @@ export function StationMap({
   useEffect(() => {
     if (!renderer || unavailable) return;
     const { map, library } = renderer;
-    const markers = mappedStations.flatMap(({ stationId, name, position, match, measurements }) => {
-      const marker = markersByStation.get(stationId) ?? classifyStation(measurements);
-      const representedByInventory = measurements.some(({ measurementId }) =>
-        inventoryMeasurementIds.has(measurementId),
-      );
-      const shown =
-        !representedByInventory &&
-        (match ||
-          (showStations && (stationId === selectedId || filteredStationIds.has(stationId))));
-      if (!shown || !matchesStation(marker, filters)) return [];
-      const point: [number, number] = [position.longitude, position.latitude];
-      const button = stationMarkerButton(name, marker, match, stationId === selectedId);
-      button.setAttribute("aria-controls", detailsId);
-      button.onclick = (event) => {
-        event.stopPropagation();
-        showStationPanel(selectedId === stationId);
-        if (inventoryKey || selectedId !== stationId) {
-          pushMapChange.current = true;
-        }
-        cancelTrace();
-        setInventorySelection(undefined);
-        setCollapsed(false);
-        select(stationId);
-      };
-      return [new library.Marker({ element: button }).setLngLat(point).addTo(map)];
-    });
+    const markers = visibleMappedStations.map(
+      ({ stationId, name, position, match, marker, rainfallIds }) => {
+        const point: [number, number] = [position.longitude, position.latitude];
+        const button = stationMarkerButton(
+          name,
+          marker,
+          match,
+          stationId === selectedId,
+          rainfallEnabled ? rainfallMarkerLabel(rainfallIds, rainfall) : undefined,
+        );
+        button.setAttribute("aria-controls", detailsId);
+        button.onclick = (event) => {
+          event.stopPropagation();
+          showStationPanel(selectedId === stationId);
+          if (inventoryKey || selectedId !== stationId) {
+            pushMapChange.current = true;
+          }
+          cancelTrace();
+          setInventorySelection(undefined);
+          setCollapsed(false);
+          select(stationId);
+        };
+        return new library.Marker({ element: button }).setLngLat(point).addTo(map);
+      },
+    );
     return () => markers.forEach((marker) => marker.remove());
   }, [
     cancelTrace,
     detailsId,
     renderer,
-    mappedStations,
-    markersByStation,
-    filters,
-    inventoryMeasurementIds,
+    visibleMappedStations,
     unavailable,
-    filteredStationIds,
     selectedId,
     showStationPanel,
     inventoryKey,
-    showStations,
+    rainfallEnabled,
+    rainfall,
   ]);
 
   const activeStation = inventorySelected ?? selected;
@@ -999,6 +1101,26 @@ export function StationMap({
               onToggle={() => setCollapsed(!collapsed)}
               onClose={dismissStation}
               comparisonAction={comparisonAction}
+              summary={
+                rainfallPeriod ? (
+                  <RainfallMapDetails
+                    period={rainfallPeriod}
+                    view={rainfall}
+                    ids={
+                      inventorySelected
+                        ? (inventorySelectionRain?.rainfallIds ?? [])
+                        : (selected?.measurements
+                            .filter(isRainfallTotal)
+                            .map(({ measurementId }) => measurementId) ?? [])
+                    }
+                    emptyLabel={
+                      inventorySelectionRain?.rainfallMarker.availability === "discoverable"
+                        ? "No rainfall observations published by RDP"
+                        : "Rainfall total unavailable for this station"
+                    }
+                  />
+                ) : null
+              }
             >
               <p className="text-ink-muted">
                 Station reference position · {activeStation.position.precisionMetres} m resolution
@@ -1060,7 +1182,29 @@ export function StationMap({
         >
           {map && !unavailable ? (
             <>
-              {stations.length > 0 ? (
+              <label className="flex flex-wrap items-center gap-2 font-medium">
+                Rainfall accumulation
+                <select
+                  className="min-h-11 rounded-md border border-line-input bg-surface px-2"
+                  value={rainfallPeriod}
+                  onChange={(event) =>
+                    setRainfallPeriod(event.target.value as RainfallMapPeriod | "")
+                  }
+                >
+                  <option value="">Off</option>
+                  {Object.entries(RAINFALL_MAP_PERIODS).map(([value, { label }]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {rainfallEnabled && rainfall.limited ? (
+                <p role="status">
+                  Showing up to four rainfall totals. Zoom in to see other gauges’ totals.
+                </p>
+              ) : null}
+              {!rainfallEnabled && stations.length > 0 ? (
                 <Button
                   aria-pressed={showStations}
                   className="aria-pressed:border-accent aria-pressed:bg-accent-soft"
@@ -1072,14 +1216,21 @@ export function StationMap({
                   Published stations
                 </Button>
               ) : null}
-              {showStations &&
+              {!rainfallEnabled &&
+              showStations &&
               stations.length > 0 &&
               !stations.some(({ stationId }) => filteredStationIds.has(stationId)) ? (
                 <p className="text-sm text-ink-muted">
                   No matching stations have verified locations
                 </p>
               ) : null}
-              <StationMarkerControls filters={filters} onChange={setFilters} />
+              {rainfallEnabled ? (
+                <p className="text-ink-muted">
+                  Outlined gauges are discoverable only. Dotted gauges have unknown publication.
+                </p>
+              ) : (
+                <StationMarkerControls filters={filters} onChange={setFilters} />
+              )}
               <InventoryPanel
                 view={inventory.view}
                 visibleStations={visibleInventory}
