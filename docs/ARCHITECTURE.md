@@ -222,11 +222,11 @@ These are display thresholds for small fluctuations. The remaining rates are ris
 
 ## Shareable Explorer views
 
-Explorer query parameters carry the public station or river point, map viewport and visible layers, comparison IDs, rolling 7- or 30-day range, rainfall transformation and per-series offsets. The copy action uses only those validated fields and the selected catalogue type. Free-text search, unrelated parameters and fragments stay out of copied links.
+Explorer query parameters carry the public station or river point, map viewport, map filters and visible layers, comparison IDs, rolling 7- or 30-day range, rainfall transformation and per-series offsets. The copy action uses only those validated fields and the selected catalogue type. Free-text search, unrelated parameters and fragments stay out of copied links. Provider selections also carry their public reference position. If the viewport read cannot resolve a shared selection, the UI uses one bounded inventory lookup around that position and checks the station key.
 
 Explorer checks comparison IDs against its public catalogue and the existing axis limit before requesting history. Restoring a view uses the existing read-only history, river trace and area inventory routes. The history window still ends at the latest whole UTC hour.
 
-Native browser history records deliberate selections and applied chart changes. Search typing and completed map moves update the current entry. Back and Forward restore state from the URL without a server navigation.
+Native browser history records deliberate selections, map filters and applied chart changes. Search typing and completed map moves update the current entry. The current camera is recorded before the first map selection so history and sharing restore the same view. Back and Forward restore state from the URL without a server navigation. Returning to a trace entry reopens its catchment panel when the point changes.
 
 ## Deployment configuration
 

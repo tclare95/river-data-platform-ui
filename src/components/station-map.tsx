@@ -16,9 +16,14 @@ import {
 import type { Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import { Button } from "@/components/button";
 import { CatchmentMeasurements, type CatchmentDiscovery } from "./catchment-measurements";
-import { InventoryPanel, useInventoryMarkers, useViewportInventory } from "./inventory-map";
+import {
+  fetchInventoryArea,
+  InventoryPanel,
+  useInventoryMarkers,
+  useViewportInventory,
+} from "./inventory-map";
 import { StationMarkerControls, stationMarkerButton } from "./station-markers";
-import type { InventoryStation } from "@/lib/inventory";
+import { inventoryViewport, type InventoryStation } from "@/lib/inventory";
 import { classifyStation, matchesStation, type StationFilters } from "@/lib/station-markers";
 import type { OverviewItem } from "@/lib/overview";
 import { StationSelection } from "./station-selection";
@@ -29,7 +34,7 @@ import {
   type TracePoint,
   type TraceResult,
 } from "./river-trace-layer";
-import { ErrorState } from "@/components/states";
+import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import type { StationGroup } from "@/lib/discovery";
 import { parameterLabel } from "@/lib/labels";
 import { writeExplorerParams } from "@/lib/explorer-state";
@@ -74,6 +79,11 @@ const formatArea = new Intl.NumberFormat("en-GB", { maximumSignificantDigits: 6 
 
 function pointQuery([lon, lat]: TracePoint) {
   return new URLSearchParams({ lon: lon.toFixed(8), lat: lat.toFixed(8) });
+}
+
+function cameraParams(map: MapLibreMap) {
+  const { lng, lat } = map.getCenter().wrap();
+  return mapViewParams({ center: [lng, Math.max(-85, Math.min(lat, 85))], zoom: map.getZoom() });
 }
 
 export type WorkspacePanel = "stations" | "layers" | "catchment" | "comparison";
@@ -155,7 +165,9 @@ export function StationMap({
   }>();
   const [status, setStatus] = useState<"loading" | "ready" | "tiles" | "unavailable">("loading");
   const [selectedId, select] = useState(initialStationId);
-  const [filters, setFilters] = useState<StationFilters>({ type: "", availability: "" });
+  const [filters, setFilters] = useState<StationFilters>(
+    initialContext.filters ?? { type: "", availability: "" },
+  );
   const [inventorySelection, setInventorySelection] = useState<
     | {
         key: string;
@@ -164,14 +176,18 @@ export function StationMap({
     | undefined
   >(() => (initialContext.inventory ? { key: initialContext.inventory } : undefined));
   const inventoryKey = inventorySelection?.key;
+  const [inventoryLookup, setInventoryLookup] = useState<
+    { key: string; station?: InventoryStation; unavailable?: boolean } | undefined
+  >();
   const [collapsed, setCollapsed] = useState(false);
   const [browseInventory, setBrowseInventory] = useState(0);
+  const [choosingTracePoint, setChoosingTracePoint] = useState(false);
   const showInventoryPicker = useCallback(() => {
+    setChoosingTracePoint(false);
     setPanel("layers");
     setBrowseInventory((value) => value + 1);
   }, [setPanel]);
   const [showStations, setShowStations] = useState(initialContext.showStations ?? true);
-  const [choosingTracePoint, setChoosingTracePoint] = useState(false);
   const [tracePending, setTracePending] = useState(false);
   const [direction, setDirection] = useState<RiverDirection>(initialTrace?.direction ?? "upstream");
   const [trace, setTrace] = useState<Trace | undefined>(() =>
@@ -213,8 +229,8 @@ export function StationMap({
     (station: InventoryStation) => {
       if (selectedId || inventoryKey !== station.key) {
         pushMapChange.current = true;
-        cancelTrace();
       }
+      cancelTrace();
       select(undefined);
       showStationPanel(inventoryKey === station.key);
       setCollapsed(false);
@@ -480,6 +496,7 @@ export function StationMap({
   }, [activePanel, panelId]);
 
   function togglePanel(next: WorkspacePanel) {
+    setChoosingTracePoint(false);
     if (activePanel === next) {
       setPanel(null);
     } else {
@@ -494,21 +511,67 @@ export function StationMap({
     document.getElementById(`${panelId}-${activePanel}`)?.focus({ preventScroll: true });
   }
   const map = renderer?.map;
-  const inventory = useViewportInventory(unavailable ? undefined : map);
+  const refreshSelectedInventory = useCallback((stations: InventoryStation[]) => {
+    setInventorySelection((current) => {
+      const station = current && stations.find(({ key }) => key === current.key);
+      return station && station !== current?.station ? { key: station.key, station } : current;
+    });
+  }, []);
+  const inventory = useViewportInventory(unavailable ? undefined : map, refreshSelectedInventory);
   const inventoryStations =
     inventory.view.status === "ready" ? inventory.view.data.stations : undefined;
   const inventorySelected =
-    inventorySelection?.station ?? inventoryStations?.find(({ key }) => key === inventoryKey);
+    inventorySelection?.station ??
+    (inventoryLookup?.key === inventoryKey ? inventoryLookup?.station : undefined);
+  const inventorySettled = !["moving", "loading"].includes(inventory.view.status);
 
-  const inventoryMeasurementIds = useMemo(
-    () =>
-      new Set(
-        inventoryStations?.flatMap(({ measures }) =>
-          measures.flatMap(({ measurementId }) => (measurementId ? [measurementId] : [])),
-        ),
-      ),
-    [inventoryStations],
-  );
+  const sharedInventoryPosition =
+    inventoryKey === initialContext.inventory ? initialContext.inventoryPosition : undefined;
+  const lookupArea = sharedInventoryPosition
+    ? inventoryViewport([
+        sharedInventoryPosition[0] - 0.005,
+        sharedInventoryPosition[1] - 0.005,
+        sharedInventoryPosition[0] + 0.005,
+        sharedInventoryPosition[1] + 0.005,
+      ])
+    : undefined;
+  const lookupBbox = lookupArea?.status === "area" ? lookupArea.bbox : undefined;
+  useEffect(() => {
+    if (
+      !map ||
+      unavailable ||
+      !inventoryKey ||
+      !lookupBbox ||
+      !inventorySettled ||
+      inventorySelected ||
+      inventoryLookup?.key === inventoryKey
+    )
+      return;
+    const controller = new AbortController();
+    void fetchInventoryArea(lookupBbox, controller.signal).then(
+      ({ stations }) => {
+        if (!controller.signal.aborted)
+          setInventoryLookup({
+            key: inventoryKey,
+            station: stations.find(({ key }) => key === inventoryKey),
+          });
+      },
+      () => {
+        if (!controller.signal.aborted)
+          setInventoryLookup({ key: inventoryKey, unavailable: true });
+      },
+    );
+    return () => controller.abort();
+  }, [
+    inventoryKey,
+    lookupBbox,
+    inventoryLookup,
+    inventorySelected,
+    inventorySettled,
+    map,
+    unavailable,
+  ]);
+
   const publishedMeasurements = useMemo(
     () =>
       new Map([
@@ -550,31 +613,50 @@ export function StationMap({
     return { inventoryWithMarkers, markersByStation };
   }, [inventoryStations, publishedMeasurements]);
   const visibleInventory = useMemo(
-    () => inventoryWithMarkers.filter(({ marker }) => matchesStation(marker, filters)),
-    [inventoryWithMarkers, filters],
+    () =>
+      inventoryWithMarkers.filter(
+        ({ marker }) =>
+          (showStations || marker.availability !== "published") && matchesStation(marker, filters),
+      ),
+    [inventoryWithMarkers, filters, showStations],
   );
   const inventoryMarkers = useMemo(() => {
-    const catchmentIds = new Set(
-      matchedStations?.flatMap(({ measurements }) =>
-        measurements.filter(({ position }) => position).map(({ measurementId }) => measurementId),
+    const preferredIds = new Set(
+      mappedStations.flatMap(({ match, stationId, measurements }) =>
+        match || stationId === selectedId
+          ? measurements.map(({ measurementId }) => measurementId)
+          : [],
       ),
     );
     const markers = visibleInventory.filter(
-      ({ measures }) =>
-        !measures.some(({ measurementId }) => measurementId && catchmentIds.has(measurementId)),
+      ({ key, measures }) =>
+        key === inventoryKey ||
+        !measures.some(({ measurementId }) => measurementId && preferredIds.has(measurementId)),
     );
-    if (
-      !inventoryStations &&
-      inventorySelected &&
-      !inventorySelected.measures.some(
-        ({ measurementId }) => measurementId && catchmentIds.has(measurementId),
-      )
-    ) {
+    if (inventorySelected && !markers.some(({ key }) => key === inventoryKey)) {
       const marker = classifyStation([], inventorySelected.measures);
-      if (matchesStation(marker, filters)) markers.push({ ...inventorySelected, marker });
+      if ((showStations || marker.availability !== "published") && matchesStation(marker, filters))
+        markers.push({ ...inventorySelected, marker });
     }
     return markers;
-  }, [visibleInventory, matchedStations, inventoryStations, inventorySelected, filters]);
+  }, [
+    visibleInventory,
+    mappedStations,
+    selectedId,
+    inventoryKey,
+    inventorySelected,
+    filters,
+    showStations,
+  ]);
+  const inventoryMeasurementIds = useMemo(
+    () =>
+      new Set(
+        inventoryMarkers.flatMap(({ measures }) =>
+          measures.flatMap(({ measurementId }) => (measurementId ? [measurementId] : [])),
+        ),
+      ),
+    [inventoryMarkers],
+  );
   useInventoryMarkers(
     unavailable ? undefined : renderer,
     inventoryMarkers,
@@ -585,12 +667,7 @@ export function StationMap({
   );
   useEffect(() => {
     if (!map || unavailable) return;
-    const onMoveEnd = () => {
-      const { lng, lat } = map.getCenter().wrap();
-      writeMap(
-        mapViewParams({ center: [lng, Math.max(-85, Math.min(lat, 85))], zoom: map.getZoom() }),
-      );
-    };
+    const onMoveEnd = () => writeMap(cameraParams(map));
     map.on("moveend", onMoveEnd);
     return () => {
       map.off("moveend", onMoveEnd);
@@ -626,21 +703,36 @@ export function StationMap({
   const bothDirections =
     (!!trace?.upstream && !!trace?.downstream) ||
     (point === initialTrace?.point && initialTrace?.bothDirections);
+  const inventoryPosition = inventorySelected?.position;
+  const inventoryLongitude = inventoryPosition?.longitude ?? sharedInventoryPosition?.[0];
+  const inventoryLatitude = inventoryPosition?.latitude ?? sharedInventoryPosition?.[1];
   useEffect(() => {
     const params = mapSelectionParams({
       station: sharedStationId,
       inventory: inventoryKey,
+      inventoryPosition:
+        inventoryKey && inventoryLongitude !== undefined && inventoryLatitude !== undefined
+          ? [inventoryLongitude, inventoryLatitude]
+          : undefined,
       showStations: showStations ? undefined : false,
+      filters,
       trace: point
         ? { point, direction, showCatchment: sharedCatchment, bothDirections, hiddenRoutes }
         : undefined,
     });
     const push = pushMapChange.current;
     pushMapChange.current = false;
+    if (push && map && !readMapContext(new URLSearchParams(location.search)).view) {
+      writeMap(cameraParams(map));
+    }
     writeMap(params, push);
   }, [
     sharedStationId,
     inventoryKey,
+    inventoryLongitude,
+    inventoryLatitude,
+    map,
+    filters,
     showStations,
     point,
     direction,
@@ -677,24 +769,24 @@ export function StationMap({
     const { map, library } = renderer;
     const markers = mappedStations.flatMap(({ stationId, name, position, match, measurements }) => {
       const marker = markersByStation.get(stationId) ?? classifyStation(measurements);
+      const representedByInventory = measurements.some(({ measurementId }) =>
+        inventoryMeasurementIds.has(measurementId),
+      );
       const shown =
-        match ||
-        (showStations &&
-          (stationId === selectedId ||
-            (filteredStationIds.has(stationId) &&
-              !measurements.some(({ measurementId }) =>
-                inventoryMeasurementIds.has(measurementId),
-              ))));
+        !representedByInventory &&
+        (match ||
+          (showStations && (stationId === selectedId || filteredStationIds.has(stationId))));
       if (!shown || !matchesStation(marker, filters)) return [];
       const point: [number, number] = [position.longitude, position.latitude];
       const button = stationMarkerButton(name, marker, match, stationId === selectedId);
       button.setAttribute("aria-controls", detailsId);
-      button.onclick = () => {
+      button.onclick = (event) => {
+        event.stopPropagation();
         showStationPanel(selectedId === stationId);
         if (inventoryKey || selectedId !== stationId) {
           pushMapChange.current = true;
-          cancelTrace();
         }
+        cancelTrace();
         setInventorySelection(undefined);
         setCollapsed(false);
         select(stationId);
@@ -719,16 +811,20 @@ export function StationMap({
   ]);
 
   const activeStation = inventorySelected ?? selected;
+  const awaitingInventory =
+    !inventorySettled || (!!lookupBbox && inventoryLookup?.key !== inventoryKey);
+  const inventoryUnavailable =
+    inventoryLookup?.unavailable || inventory.view.status === "unavailable";
   const selectionKey = inventorySelected
     ? `inventory:${inventorySelected.key}`
     : selected
       ? `station:${selected.stationId}`
       : undefined;
   useEffect(() => {
-    if (activePanel) return;
+    if (activePanel || choosingTracePoint) return;
     if (selectionKey && focusSelection.current) heading.current?.focus({ preventScroll: true });
     focusSelection.current = false;
-  }, [activePanel, selectionKey]);
+  }, [activePanel, choosingTracePoint, selectionKey]);
 
   const latestById = useMemo(
     () => new Map(items.map(({ measurement, latest }) => [measurement.measurementId, latest])),
@@ -843,7 +939,7 @@ export function StationMap({
           </ErrorState>
         ) : null}
         {!unavailable && (status !== "ready" || choosingTracePoint || tracePending) ? (
-          <div className="absolute top-2 left-2 z-10 max-w-[calc(100%-4rem)] space-y-2 rounded-md bg-surface p-2 text-sm shadow [@media(scripting:none)]:hidden">
+          <div className="absolute top-2 left-2 z-20 max-w-[min(26rem,calc(100%-4rem))] space-y-2 rounded-md bg-surface p-2 text-sm shadow [@media(scripting:none)]:hidden">
             <p role="status" className="text-ink-muted">
               {choosingTracePoint
                 ? "Select a point on a river to trace its upstream catchment."
@@ -880,7 +976,12 @@ export function StationMap({
         ) : null}
         <div
           id={detailsId}
-          hidden={activePanel !== null || !activeStation || unavailable}
+          hidden={
+            activePanel !== null ||
+            choosingTracePoint ||
+            (!activeStation && !inventoryKey) ||
+            unavailable
+          }
           className="explorer-station-panel pointer-events-none [@media(scripting:none)]:hidden"
         >
           {activeStation && selectionKey && !unavailable ? (
@@ -918,6 +1019,31 @@ export function StationMap({
                 Trace upstream catchment
               </Button>
             </StationSelection>
+          ) : inventoryKey && !unavailable ? (
+            <div className="pointer-events-auto rounded-lg bg-surface shadow-md">
+              {awaitingInventory ? (
+                <div className="space-y-2 p-3">
+                  <p aria-hidden="true" className="text-sm">
+                    Finding selected station…
+                  </p>
+                  <LoadingState
+                    label="Finding selected station"
+                    lines={1}
+                    className="border-0 p-0"
+                  />
+                  <Button onClick={dismissStation}>Clear station selection</Button>
+                </div>
+              ) : (
+                <EmptyState
+                  title={
+                    inventoryUnavailable
+                      ? "Selected station is temporarily unavailable"
+                      : "Selected station could not be found"
+                  }
+                  action={<Button onClick={dismissStation}>Clear station selection</Button>}
+                />
+              )}
+            </div>
           ) : null}
         </div>
         <div
@@ -1059,6 +1185,14 @@ export function StationMap({
                   <p>{trace.error}</p>
                 )}
               </div>
+              {!result && trace.error ? (
+                <Button
+                  disabled={tracePending}
+                  onClick={() => void traceFrom(trace.point, direction, { previous: trace })}
+                >
+                  Retry trace
+                </Button>
+              ) : null}
               {provenance ? (
                 <p className="break-words text-ink-muted">
                   Release {provenance.release.releaseId} · {provenance.release.version.slice(0, 12)}
