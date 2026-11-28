@@ -6,9 +6,13 @@ The authoritative requirements live in RDP's [River Explorer OpenSpec](https://g
 
 ## First visitor journey
 
-**Explore Great Britain’s rivers → select a point to see its modelled upstream catchment where available → discover published measurements.**
+**Explore Great Britain’s rivers → select a station → inspect its measurements, compare them or trace upstream.**
 
-- Discovery: optional station markers and a searchable station list. The list includes stations without verified coordinates and works without a map.
+- The map opens in Explore mode with published stations. Pan and zoom to browse regions. Zoom in for provider inventory where coverage is available. Layers filters the map by measurement type and publication status. Stations offers a searchable published list, including stations without verified positions, and works without a map.
+- Selecting a marker opens station details at the current zoom and centre. Panning, zooming and inventory refresh keep the selection until the visitor switches or closes it. Map filters can hide markers while the selection remains available. Discoverable-only stations show known measurement types and explain observation availability.
+- Add published measurements from station details, the station list or catchment results. Compare shows the selected measurements, removal controls and history. On narrow screens, one workspace panel opens at a time and station details can collapse to reveal the map.
+- Trace river arms one map point or map centre selection. Selecting a station exits point-picking. Station details offer a direct upstream trace. A completed trace returns the map to Explore mode and keeps the catchment available until it is cleared or replaced.
+- Copy Explorer link in Layers shares the viewport, map filters, selected station or trace, and comparison settings. Back and Forward restore deliberate choices. Map moves update the current history entry.
 - Detail: human-readable station name, original unit/datum, last observed time and freshness. Show no-observation, stale, unavailable and error states honestly.
 - History: initially a bounded week/month window; preserve gaps, source times and coverage uncertainty. Do not interpolate missing readings.
 - Attribution: source and original measurement provenance remain visible without distracting from the data.

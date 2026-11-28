@@ -15,24 +15,37 @@ type InventoryView =
   | { status: "moving" | "loading" | "zoom" | "outside" | "unavailable" }
   | { status: "ready"; data: InventoryArea };
 
-export function useViewportInventory(map: MapLibreMap | undefined) {
+export async function fetchInventoryArea(bbox: string, signal: AbortSignal) {
+  const query = new URLSearchParams({ bbox });
+  const response = await fetch(`/api/discovery/area?${query}`, { signal });
+  if (!response.ok) throw new Error("Inventory unavailable");
+  const { data } = (await response.json()) as { data: InventoryArea };
+  return data;
+}
+
+export function useViewportInventory(
+  map: MapLibreMap | undefined,
+  onReady: (stations: InventoryStation[]) => void,
+) {
   const [view, setView] = useState<InventoryView>({ status: "moving" });
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     if (!map) return;
     let timer: ReturnType<typeof setTimeout>;
     let request: AbortController | undefined;
+    let pendingBbox: string | undefined;
+    let lastResult: { bbox: string; data: InventoryArea; time: number } | undefined;
 
     const cancel = () => {
       clearTimeout(timer);
       request?.abort();
+      pendingBbox = undefined;
     };
     const moving = () => {
       cancel();
       setView({ status: "moving" });
     };
     const settled = () => {
-      cancel();
       const bounds = map.getBounds();
       const viewport = inventoryViewport([
         bounds.getWest(),
@@ -40,21 +53,28 @@ export function useViewportInventory(map: MapLibreMap | undefined) {
         bounds.getEast(),
         bounds.getNorth(),
       ]);
+      if (viewport.status === "area" && viewport.bbox === pendingBbox) return;
+      cancel();
       if (viewport.status !== "area") return setView(viewport);
+      if (viewport.bbox === lastResult?.bbox && Date.now() - lastResult.time < 30_000) {
+        onReady(lastResult.data.stations);
+        return setView({ status: "ready", data: lastResult.data });
+      }
+      pendingBbox = viewport.bbox;
       setView({ status: "loading" });
       timer = setTimeout(async () => {
         const controller = new AbortController();
         request = controller;
         try {
-          const query = new URLSearchParams({ bbox: viewport.bbox });
-          const response = await fetch(`/api/discovery/area?${query}`, {
-            signal: controller.signal,
-          });
-          if (!response.ok) throw new Error("Inventory unavailable");
-          const { data } = (await response.json()) as { data: InventoryArea };
-          if (!controller.signal.aborted) setView({ status: "ready", data });
+          const data = await fetchInventoryArea(viewport.bbox, controller.signal);
+          if (controller.signal.aborted) return;
+          lastResult = { bbox: viewport.bbox, data, time: Date.now() };
+          onReady(data.stations);
+          setView({ status: "ready", data });
         } catch {
           if (!controller.signal.aborted) setView({ status: "unavailable" });
+        } finally {
+          if (!controller.signal.aborted) pendingBbox = undefined;
         }
       }, INVENTORY_DEBOUNCE_MS);
     };
@@ -66,7 +86,7 @@ export function useViewportInventory(map: MapLibreMap | undefined) {
       map.off("movestart", moving);
       map.off("moveend", settled);
     };
-  }, [map, retry]);
+  }, [map, onReady, retry]);
   return { view, retry: () => setRetry((attempt) => attempt + 1) };
 }
 
@@ -105,7 +125,10 @@ export function useInventoryMarkers(
           station.key === selectedKey,
         );
         button.setAttribute("aria-controls", detailsId);
-        button.onclick = () => onSelect(station);
+        button.onclick = (event) => {
+          event.stopPropagation();
+          onSelect(station);
+        };
         return new library.Marker({ element: button }).setLngLat(point).addTo(map);
       }
       const button = document.createElement("button");
@@ -117,7 +140,8 @@ export function useInventoryMarkers(
       count.textContent = String(group.length);
       button.append(count);
       button.setAttribute("aria-label", `${group.length} stations`);
-      button.onclick = () => {
+      button.onclick = (event) => {
+        event.stopPropagation();
         if (map.getZoom() >= MAX_MAP_ZOOM) onBrowse();
         else map.easeTo({ center: point, zoom: Math.min(MAX_MAP_ZOOM, map.getZoom() + 2) });
       };
@@ -166,7 +190,8 @@ export function InventoryPanel({
     }
   }, [browse]);
 
-  if (view.status === "moving") return null;
+  if (view.status === "moving")
+    return <p className="text-ink-muted">Provider stations update when the map stops moving.</p>;
   if (view.status === "zoom")
     return (
       <p role="status" className="text-sm text-ink-muted">
@@ -201,7 +226,7 @@ export function InventoryPanel({
         <>
           <p role="status">
             {visibleStations.length} provider{" "}
-            {visibleStations.length === 1 ? "station" : "stations"} shown.
+            {visibleStations.length === 1 ? "station matches" : "stations match"} in this map area.
           </p>
           <details ref={list}>
             <summary className="cursor-pointer py-2 underline">

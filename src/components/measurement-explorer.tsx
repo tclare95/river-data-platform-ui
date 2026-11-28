@@ -93,7 +93,7 @@ export function MeasurementExplorer({
     state.map.trace && !state.map.station && !state.map.inventory ? "catchment" : null,
   );
   const [mapRestore, setMapRestore] = useState({ context: state.map, revision: 0 });
-  const currentMap = useRef(JSON.stringify(explorerMapParams(state.map)));
+  const currentMap = useRef(state.map);
   const shareInput = useRef<HTMLInputElement>(null);
   const [shareResult, setShareResult] = useState({ copied: false, url: "" });
   const sharedRange = range === DEFAULT_RANGE ? undefined : range;
@@ -107,7 +107,7 @@ export function MeasurementExplorer({
   );
 
   const rememberMap = useCallback((context: MapContext) => {
-    currentMap.current = JSON.stringify(explorerMapParams(context));
+    currentMap.current = context;
   }, []);
 
   useEffect(() => {
@@ -115,10 +115,22 @@ export function MeasurementExplorer({
       if (location.pathname !== "/") return;
       const next = restoreSelection(readExplorerState(new URLSearchParams(location.search)), items);
       const mapKey = JSON.stringify(explorerMapParams(next.map));
-      if (mapKey !== currentMap.current) {
-        currentMap.current = mapKey;
+      const previous = currentMap.current;
+      if (mapKey !== JSON.stringify(explorerMapParams(previous))) {
+        currentMap.current = next.map;
         setMapRestore(({ revision }) => ({ context: next.map, revision: revision + 1 }));
-        if (!next.map.trace) setPanel((current) => (current === "catchment" ? null : current));
+        const pointChanged =
+          next.map.trace?.point[0] !== previous.trace?.point[0] ||
+          next.map.trace?.point[1] !== previous.trace?.point[1];
+        const stationChanged =
+          next.map.station !== previous.station || next.map.inventory !== previous.inventory;
+        if (next.map.trace && (pointChanged || (!next.map.station && !next.map.inventory))) {
+          setPanel("catchment");
+        } else if (stationChanged) {
+          setPanel(null);
+        } else if (!next.map.trace) {
+          setPanel((current) => (current === "catchment" ? null : current));
+        }
       }
       setState(next);
       setShareResult({ copied: false, url: "" });

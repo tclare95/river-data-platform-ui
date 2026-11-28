@@ -1,3 +1,5 @@
+import { measurementTypes, stationAvailability, type StationFilters } from "./station-markers";
+
 export const GB_BOUNDS: [[number, number], [number, number]] = [
   [-8.7, 49.8],
   [2.1, 60.9],
@@ -16,7 +18,9 @@ export function singleParam(params: SearchParams, name: string) {
 export type MapContext = {
   station?: string;
   inventory?: string;
+  inventoryPosition?: [number, number];
   showStations?: boolean;
+  filters?: StationFilters;
   view?: { center: [number, number]; zoom: number };
   trace?: {
     point: [number, number];
@@ -41,20 +45,37 @@ export function readMapContext(params: SearchParams): MapContext {
   const zoom = decimal(get("zoom"), 0, MAX_MAP_ZOOM);
   const station = get("station");
   const inventory = get("inventory");
+  const inventoryLon = decimal(get("inventoryLon"), -180, 180);
+  const inventoryLat = decimal(get("inventoryLat"), -85, 85);
+  const mapType = get("mapType");
+  const mapAvailability = get("mapAvailability");
   const traceLon = decimal(get("traceLon"), -180, 180);
   const traceLat = decimal(get("traceLat"), -90, 90);
   const direction = get("direction");
   const hidden = get("hide");
 
+  const inventoryKey =
+    typeof inventory === "string" && /^[\w-]+:[\w.:-]+$/.test(inventory) && inventory.length <= 160
+      ? inventory
+      : undefined;
   return {
     station: typeof station === "string" && /^[\w.:-]{1,128}$/.test(station) ? station : undefined,
-    inventory:
-      typeof inventory === "string" &&
-      /^[\w-]+:[\w.:-]+$/.test(inventory) &&
-      inventory.length <= 160
-        ? inventory
+    inventory: inventoryKey,
+    inventoryPosition:
+      inventoryKey && inventoryLon !== undefined && inventoryLat !== undefined
+        ? [inventoryLon, inventoryLat]
         : undefined,
     showStations: toggle(get("stations")),
+    filters: {
+      type:
+        typeof mapType === "string" && Object.hasOwn(measurementTypes, mapType)
+          ? (mapType as StationFilters["type"])
+          : "",
+      availability:
+        typeof mapAvailability === "string" && Object.hasOwn(stationAvailability, mapAvailability)
+          ? (mapAvailability as StationFilters["availability"])
+          : "",
+    },
     view:
       lon !== undefined && lat !== undefined && (get("zoom") === undefined || zoom !== undefined)
         ? { center: [lon, lat], zoom: zoom ?? LOCATION_ZOOM }
@@ -85,12 +106,23 @@ export function mapViewParams(view?: MapContext["view"]) {
   };
 }
 
-export function mapSelectionParams({ station, inventory, showStations, trace }: MapContext) {
+export function mapSelectionParams({
+  station,
+  inventory,
+  inventoryPosition,
+  showStations,
+  filters,
+  trace,
+}: MapContext) {
   const hidden = trace?.hiddenRoutes;
   return {
     station,
     inventory,
+    inventoryLon: inventoryPosition?.[0].toFixed(6),
+    inventoryLat: inventoryPosition?.[1].toFixed(6),
     stations: showStations === undefined ? undefined : showStations ? "show" : "hide",
+    mapType: filters?.type || undefined,
+    mapAvailability: filters?.availability || undefined,
     tracing: undefined, // Drop the legacy mode parameter when writing Explorer state.
     traceLon: trace?.point[0].toFixed(8),
     traceLat: trace?.point[1].toFixed(8),
