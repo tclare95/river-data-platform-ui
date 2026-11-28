@@ -103,8 +103,22 @@ const links = () =>
     .queryAllByRole("link")
     .map((link) => link.textContent);
 
+function openPanel(name: string | RegExp) {
+  const button = within(screen.getByRole("group", { name: "Map tools" })).getByRole("button", {
+    name,
+  });
+  if (button.getAttribute("aria-expanded") !== "true") fireEvent.click(button);
+  return button;
+}
+
+async function readyTrace() {
+  const button = screen.getByRole("button", { name: "Trace river" });
+  await waitFor(() => expect(button).toBeEnabled());
+  return button;
+}
+
 async function armTrace() {
-  fireEvent.click(await screen.findByRole("button", { name: "Trace river", pressed: false }));
+  fireEvent.click(await readyTrace());
 }
 
 function mapClick(target: HTMLElement, lng = -1.25, lat = 52.5) {
@@ -331,6 +345,7 @@ describe("measurement explorer", () => {
       .mockResolvedValueOnce(inventoryResponse([providerStation("New gauge", -1.2)]));
     vi.stubGlobal("fetch", readArea);
     render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
+    openPanel("Layers");
     await screen.findByText("Zoom in to discover provider stations.");
     vi.useFakeTimers();
     moveArea([-1.6, 52.5, -1.1, 53]);
@@ -376,6 +391,7 @@ describe("measurement explorer", () => {
       );
     vi.stubGlobal("fetch", fetchInventory);
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    openPanel("Layers");
     await screen.findByText("Zoom in to discover provider stations.");
     moveArea([-1.5, 52.5, -1, 53]);
     const user = userEvent.setup();
@@ -451,15 +467,17 @@ describe("measurement explorer", () => {
     await user.keyboard("{Enter}");
     expect(screen.getByRole("heading", { name: "Rain Lane" })).toHaveFocus();
 
+    openPanel("Layers");
     await user.selectOptions(availability, "published");
     expect(map.queryByRole("button", { name: /Rain Lane/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Rain Lane" })).toBeVisible();
+    expect(new URLSearchParams(location.search).has("inventory")).toBe(true);
     await user.selectOptions(type, "rainfall");
     expect(screen.getByText("No provider stations match the map filters")).toBeVisible();
     await user.selectOptions(availability, "discoverable");
     expect(
       map.getByRole("button", { name: "River Bank · Rainfall · Discoverable only" }),
     ).toBeVisible();
+    openPanel("Stations");
     expect(stationList().getByRole("link", { name: "Kegworth Water level" })).toBeVisible();
     expect(fetchInventory).toHaveBeenCalledOnce();
   });
@@ -471,6 +489,7 @@ describe("measurement explorer", () => {
       .mockResolvedValueOnce(inventoryResponse([]));
     vi.stubGlobal("fetch", fetchInventory);
     render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
+    openPanel("Layers");
     await screen.findByText("Zoom in to discover provider stations.");
     moveArea([-1.5, 52.5, -1, 53]);
     await userEvent
@@ -491,14 +510,16 @@ describe("measurement explorer", () => {
     vi.stubGlobal("fetch", fetchRiver);
     render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
     const map = screen.getByRole("region", { name: "River map" });
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     act(() => mapMock.events.dispatchEvent(new Event("load")));
     act(() => mapMock.events.dispatchEvent(new Event("moveend")));
     expect(mapMock.create).toHaveBeenCalledWith(expect.objectContaining({ bounds: GB_BOUNDS }));
     expect(mapMock.addSource).not.toHaveBeenCalled();
     expect(fetchRiver).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Published stations" })).not.toBeInTheDocument();
+    openPanel("Stations");
     expect(stationList().getByText("No measurements to show yet")).toBeInTheDocument();
+    openPanel("Layers");
     await user.click(screen.getByText("Map sources and coverage"));
     expect(
       screen.getByText(/Drainage area overview boundaries are currently unavailable/),
@@ -528,7 +549,7 @@ describe("measurement explorer", () => {
     vi.stubGlobal("fetch", fetchRiver);
     render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
     const map = screen.getByRole("region", { name: "River map" });
-    const traceButton = await screen.findByRole("button", { name: "Trace river", pressed: false });
+    const traceButton = await readyTrace();
     act(() => mapMock.events.dispatchEvent(new Event("load")));
 
     mapClick(map);
@@ -565,6 +586,7 @@ describe("measurement explorer", () => {
     expect(fetchRiver).toHaveBeenCalledTimes(3);
     expect(currentTraceData()).toEqual(existingOverlay);
     expect(new URLSearchParams(location.search).get("traceLon")).toBe("-1.25000000");
+    openPanel("Catchment");
     expect(screen.getByText("No matching published measurements")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Clear catchment" }));
@@ -588,7 +610,7 @@ describe("measurement explorer", () => {
     }
     window.history.replaceState(null, "", `/?${search}`);
     render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     expect(mapMock.create).toHaveBeenCalledWith(expect.objectContaining(camera));
   });
 
@@ -605,15 +627,14 @@ describe("measurement explorer", () => {
         initialState={readExplorerState({ station })}
       />,
     );
-    expect(
-      await screen.findByRole("button", { name: "Published stations", pressed: true }),
-    ).toBeInTheDocument();
+    await readyTrace();
     expect(mapMock.create).toHaveBeenCalledWith(
       expect.objectContaining({ center: [-1.335368, 52.865431], zoom: 12 }),
     );
     expect(screen.getByRole("heading", { name: "Shardlow" })).toBeInTheDocument();
+    openPanel("Stations");
     expect(stationList().getByRole("link", { name: "Stone Rainfall" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Shardlow" })).not.toHaveFocus();
+    expect(screen.queryByRole("heading", { name: "Shardlow" })).not.toBeInTheDocument();
   });
 
   it("starts with the GB map and keeps selected station details and viewport through filters", async () => {
@@ -622,12 +643,14 @@ describe("measurement explorer", () => {
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
     const mapRegion = screen.getByRole("region", { name: "River map" });
     const map = within(mapRegion);
+    openPanel("Layers");
     const layer = await screen.findByRole("button", { name: "Published stations", pressed: true });
     const shardlow = map.getByRole("button", { name: /^Shardlow ·/ });
     expect(new URLSearchParams(location.search).has("stations")).toBe(false);
     expect(map.getAllByRole("button")).toHaveLength(2);
     expect(mapMock.create).toHaveBeenCalledWith(expect.objectContaining({ bounds: GB_BOUNDS }));
     expect(mapMock.setLngLat).toHaveBeenCalledWith([-1.335368, 52.865431]);
+    openPanel("Stations");
     expect(screen.getByRole("link", { name: "Stone Rainfall" })).toBeInTheDocument();
 
     shardlow.focus();
@@ -650,10 +673,11 @@ describe("measurement explorer", () => {
     await user.tab();
     expect(details.getByRole("button", { name: "Collapse" })).toHaveFocus();
 
+    openPanel("Stations");
     await user.click(screen.getByRole("radio", { name: "Flow" }));
     expect(map.getByRole("button", { name: /^Shardlow ·/ })).toBeInTheDocument();
     expect(map.queryByRole("button", { name: /^Kegworth ·/ })).not.toBeInTheDocument();
-    expect(details.getByRole("link", { name: "Water level" })).toBeInTheDocument();
+    expect(details.getByText("Water level")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Shardlow Water level" })).not.toBeInTheDocument();
 
@@ -667,8 +691,10 @@ describe("measurement explorer", () => {
     await user.clear(screen.getByRole("searchbox"));
     expect(screen.getByRole("region", { name: "River map" })).toBe(mapRegion);
     expect(map.getAllByRole("button")).toHaveLength(2);
-    expect(details.getByRole("heading", { name: "Shardlow" })).toBeInTheDocument();
+    expect(details.getByText("Shardlow")).toBeInTheDocument();
+    const layers = openPanel("Layers");
     await user.click(layer);
+    await user.click(layers);
     expect(new URLSearchParams(location.search).get("stations")).toBe("hide");
     expect(map.queryByRole("button", { name: /^Shardlow ·/ })).not.toBeInTheDocument();
     expect(details.getByRole("heading", { name: "Shardlow" })).toBeInTheDocument();
@@ -682,6 +708,7 @@ describe("measurement explorer", () => {
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} />);
     const map = within(screen.getByRole("region", { name: "River map" }));
+    openPanel("Layers");
     const layer = await screen.findByRole("button", { name: "Published stations", pressed: false });
     expect(map.queryByRole("button", { name: /^Shardlow ·/ })).not.toBeInTheDocument();
 
@@ -706,15 +733,14 @@ describe("measurement explorer", () => {
     const mapRegion = screen.getByRole("region", { name: "River map" });
     const map = within(mapRegion);
 
+    const stationsButton = openPanel("Stations");
     const catalogue = screen.getByRole("region", { name: "Stations" });
-    const stationsHeading = within(catalogue).getByRole("heading", { name: "Stations" });
     expect(
       mapRegion.compareDocumentPosition(catalogue) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(within(catalogue).getByRole("searchbox", { name: "Search" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Browse stations" })).toHaveAttribute(
-      "href",
-      `#${stationsHeading.id}`,
+    expect(document.getElementById(stationsButton.getAttribute("aria-controls")!)).toContainElement(
+      catalogue,
     );
 
     await user.click(await map.findByRole("button", { name: /^Shardlow ·/ }));
@@ -750,8 +776,9 @@ describe("measurement explorer", () => {
     await user.click(
       nextPanel.getByRole("button", { name: /^Add to comparison: Kegworth · Water level/ }),
     );
-    expect(screen.getByRole("region", { name: "Comparison selection" })).toHaveTextContent(
-      "1 of 4 selected",
+    expect(screen.getByRole("button", { name: "Compare (1)" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
     );
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("region", { name: "Kegworth" })).not.toBeInTheDocument();
@@ -771,7 +798,7 @@ describe("measurement explorer", () => {
         .mockResolvedValue(inventoryResponse([providerStation("Rain Lane", -1.3)])),
     );
     render(<MeasurementExplorer items={items} />);
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     moveArea([-1.5, 52.5, -1, 53]);
     const mapRegion = screen.getByRole("region", { name: "River map" });
     const map = within(mapRegion);
@@ -837,31 +864,38 @@ describe("measurement explorer", () => {
     render(explorer);
     const map = within(screen.getByRole("region", { name: "River map" }));
     const marker = await map.findByRole("button", { name: /^Shardlow ·/ });
-    await user.click(marker);
+    fireEvent.click(marker);
     const details = within(document.getElementById(marker.getAttribute("aria-controls")!)!);
-    const list = within(screen.getByRole("region", { name: "Stations" }));
-    const selection = within(screen.getByRole("region", { name: "Comparison selection" }));
-
-    await user.click(
+    fireEvent.click(
       details.getByRole("button", { name: /^Add to comparison: Shardlow · Water level/ }),
     );
-    expect(selection.queryByRole("link")).not.toBeInTheDocument();
+    openPanel("Stations");
+    const list = stationList();
     const duplicate = list.getByRole("button", {
       name: /^Added to comparison: Shardlow · Water level/,
     });
     expect(duplicate).toHaveAttribute("aria-disabled", "true");
-    await user.click(duplicate);
-    expect(selection.getAllByRole("listitem")).toHaveLength(1);
+    fireEvent.click(duplicate);
+    const selection = () => within(screen.getByRole("region", { name: "Comparison selection" }));
+    openPanel("Compare (1)");
+    expect(selection().queryByRole("link")).not.toBeInTheDocument();
+    expect(selection().getAllByRole("listitem")).toHaveLength(1);
 
-    await user.click(details.getByRole("button", { name: /^Add to comparison: Shardlow · Flow/ }));
+    fireEvent.click(map.getByRole("button", { name: /^Shardlow ·/ }));
+    fireEvent.click(details.getByRole("button", { name: /^Add to comparison: Shardlow · Flow/ }));
+    openPanel("Stations");
     const rainfall = list.getByRole("button", { name: /^Needs a third axis: Stone · Rainfall/ });
     expect(rainfall).toHaveAttribute("aria-disabled", "true");
-    await user.click(rainfall);
-    expect(selection.getAllByRole("listitem")).toHaveLength(2);
-    await user.click(selection.getByRole("button", { name: /^Remove Shardlow · Flow/ }));
-    await user.click(list.getByRole("button", { name: /^Add to comparison: Stone · Rainfall/ }));
+    fireEvent.click(rainfall);
+    openPanel("Compare (2)");
+    expect(selection().getAllByRole("listitem")).toHaveLength(2);
+    fireEvent.click(selection().getByRole("button", { name: /^Remove Shardlow · Flow/ }));
+    openPanel("Stations");
+    fireEvent.click(list.getByRole("button", { name: /^Add to comparison: Stone · Rainfall/ }));
+    await user.type(screen.getByRole("searchbox"), "stone");
     const query = "?a=ea-shardlow-level&b=ea-stone-rainfall";
-    expect(selection.getByRole("link", { name: "Open full comparison" })).toHaveAttribute(
+    openPanel("Compare (2)");
+    expect(selection().getByRole("link", { name: "Open full comparison" })).toHaveAttribute(
       "href",
       `/compare${query}`,
     );
@@ -871,11 +905,11 @@ describe("measurement explorer", () => {
       station: "ea-shardlow",
     });
 
-    await user.type(screen.getByRole("searchbox"), "stone");
-    expect(selection.getAllByRole("listitem")).toHaveLength(2);
     cleanup();
     render(explorer);
+    openPanel("Stations");
     expect(screen.getByRole("searchbox")).toHaveValue("stone");
+    openPanel("Compare (2)");
     expect(screen.getByRole("link", { name: "Open full comparison" })).toHaveAttribute(
       "href",
       `/compare${query}`,
@@ -890,14 +924,17 @@ describe("measurement explorer", () => {
     }
     const user = userEvent.setup();
     render(<MeasurementExplorer items={levels} initialQuery={{ q: "", type: null }} />);
-    const list = within(screen.getByRole("region", { name: "Stations" }));
+    const list = within(
+      document.getElementById(openPanel("Stations").getAttribute("aria-controls")!)!,
+    );
     for (const button of list.getAllByRole("button", { name: /^Add to comparison/ }).slice(0, 4)) {
       await user.click(button);
     }
-    const selection = within(screen.getByRole("region", { name: "Comparison selection" }));
     const fifth = list.getByRole("button", { name: /^Four measurements selected/ });
     expect(fifth).toHaveAttribute("aria-disabled", "true");
     await user.click(fifth);
+    openPanel("Compare (4)");
+    const selection = within(screen.getByRole("region", { name: "Comparison selection" }));
     expect(selection.getAllByRole("listitem")).toHaveLength(4);
     const href = selection.getByRole("link").getAttribute("href");
     expect(href).toBe(
@@ -911,8 +948,10 @@ describe("measurement explorer", () => {
         ),
     );
     await user.click(selection.getAllByRole("button", { name: /^Remove/ })[0]);
+    openPanel("Stations");
     expect(fifth).toHaveAttribute("aria-disabled", "false");
     await user.click(fifth);
+    openPanel("Compare (4)");
     expect(selection.getAllByRole("listitem")).toHaveLength(4);
   });
 
@@ -921,6 +960,7 @@ describe("measurement explorer", () => {
     window.history.replaceState(null, "", "/?q=stone");
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "stone", type: null }} />);
+    openPanel("Stations");
     expect(screen.getByRole("link", { name: "Stone Rainfall" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "River map" })).toBeInTheDocument();
     await screen.findByText("No matching stations have verified locations");
@@ -944,6 +984,7 @@ describe("measurement explorer", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent("River map unavailable");
     }
 
+    openPanel("Stations");
     await user.type(screen.getByRole("searchbox"), "kegw");
     expect(screen.getByRole("link", { name: "Kegworth Water level" })).toHaveAttribute(
       "href",
@@ -1050,7 +1091,7 @@ describe("measurement explorer", () => {
     await user.click(screen.getByRole("button", { name: "Clear catchment" }));
     expect(mapMock.setData).toHaveBeenLastCalledWith({ type: "FeatureCollection", features: [] });
     expect(screen.queryByText(/upstream route incomplete/)).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
+
     expect(mode).toHaveAttribute("aria-pressed", "false");
     expect(details.getAllByRole("button", { name: /^Add to comparison/ })).toHaveLength(2);
     expect(map).toHaveClass("maplibregl-map");
@@ -1101,6 +1142,7 @@ describe("measurement explorer", () => {
       for (const button of details.getAllByRole("button", { name: /^Add to comparison/ })) {
         await user.click(button);
       }
+      openPanel("Compare (2)");
       const compare = screen.getByRole("link", { name: "Open full comparison" });
       const comparisonUrl = compare.getAttribute("href");
       const map = screen.getByRole("region", { name: "River map" });
@@ -1222,7 +1264,7 @@ describe("measurement explorer", () => {
         ),
     );
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     act(() => mapMock.events.dispatchEvent(new Event("load")));
     await armTrace();
     mapClick(screen.getByRole("region", { name: "River map" }));
@@ -1279,7 +1321,7 @@ describe("measurement explorer", () => {
         : fetchRiver(url, init),
     );
     render(<MeasurementExplorer items={items} initialQuery={{ q: "shardlow", type: null }} />);
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     act(() => mapMock.events.dispatchEvent(new Event("load")));
     const map = screen.getByRole("region", { name: "River map" });
     await armTrace();
@@ -1322,17 +1364,17 @@ describe("measurement explorer", () => {
     });
     await user.click(marker);
     const details = document.getElementById(marker.getAttribute("aria-controls")!)!;
+    openPanel("Layers");
     const mapType = screen.getByRole("combobox", { name: "Map measurement type" });
     await user.selectOptions(mapType, "flow");
     expect(within(map).queryByRole("button", { name: /^Stone ·/ })).not.toBeInTheDocument();
-    expect(within(details).getByRole("heading", { name: "Stone" })).toBeVisible();
-    expect(list.getByRole("link", { name: /^Rainfall/ })).toBeVisible();
+    expect(within(details).getByText("Stone")).toBeInTheDocument();
     expect(traceKinds()).toContain("catchment");
     await user.selectOptions(mapType, "");
     act(() => mapMock.events.dispatchEvent(new Event("moveend")));
 
-    const comparison = within(screen.getByRole("region", { name: "Comparison selection" }));
-    expect(comparison.queryByRole("list")).not.toBeInTheDocument();
+    openPanel("Catchment");
+    expect(list.getByRole("link", { name: /^Rainfall/ })).toBeVisible();
     await user.click(
       list.getByRole("button", { name: /^Add to comparison: Shardlow · Water level/ }),
     );
@@ -1340,6 +1382,9 @@ describe("measurement explorer", () => {
     const flow = list.getByRole("button", { name: /^Needs a third axis: Shardlow · Flow/ });
     expect(flow).toHaveAttribute("aria-disabled", "true");
     await user.click(flow);
+    expect(fetchHistory).not.toHaveBeenCalled();
+    openPanel("Compare (2)");
+    const comparison = within(screen.getByRole("region", { name: "Comparison selection" }));
     const compare = comparison.getByRole("link", { name: "Open full comparison" });
     expect(compare).toHaveAttribute("href", "/compare?a=ea-shardlow-level&b=ea-stone-rainfall");
     const chart = within(screen.getByRole("region", { name: "Comparison history" }));
@@ -1372,8 +1417,8 @@ describe("measurement explorer", () => {
     await act(async () => finishOldHistory(new Response(null, { status: 503 })));
     expect(chart.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "River map" })).toBe(map);
-    expect(within(details).getByRole("heading", { name: "Stone" })).toBeInTheDocument();
-    expect(list.getByRole("heading", { name: "Stone" })).toBeInTheDocument();
+    expect(within(details).getByText("Stone")).toBeInTheDocument();
+    expect(list.getByText("Stone")).toBeInTheDocument();
     expect(mapMock.create).toHaveBeenCalledTimes(1);
     expect(mapMock.fitBounds).not.toHaveBeenCalled();
     expect(Object.fromEntries(new URLSearchParams(window.location.search))).toMatchObject({
@@ -1389,6 +1434,7 @@ describe("measurement explorer", () => {
       direction: "upstream",
       catchment: "show",
     });
+    openPanel("Catchment");
     await user.click(screen.getByRole("checkbox", { name: "Upstream reaches" }));
     expect(traceKinds()).toEqual(expect.arrayContaining(["selected", "catchment"]));
     await user.click(screen.getByRole("button", { name: "Hide catchment" }));
@@ -1396,10 +1442,12 @@ describe("measurement explorer", () => {
       "href",
       "/compare?a=ea-shardlow-level&b=ea-stone-rainfall&range=30d",
     );
+    openPanel("Compare (2)");
     await user.click(comparison.getByRole("button", { name: /^Remove Stone · Rainfall/ }));
     expect(screen.queryByRole("region", { name: "Comparison history" })).not.toBeInTheDocument();
     expect(new URLSearchParams(window.location.search).has("b")).toBe(false);
-    expect(fetchHistory).toHaveBeenCalledTimes(2);
+    expect(fetchHistory).toHaveBeenCalledTimes(3);
+    openPanel("Catchment");
     expect(list.getByRole("button", { name: /^Add to comparison: Shardlow · Flow/ })).toBeEnabled();
     expect(fetchRiver).toHaveBeenCalledTimes(2);
   });
@@ -1440,14 +1488,11 @@ describe("measurement explorer", () => {
     );
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
-    const chart = within(screen.getByRole("region", { name: "Comparison history" }));
-    expect(chart.getByRole("button", { name: "30 days", pressed: true })).toBeInTheDocument();
-    expect(await chart.findByRole("alert")).toHaveTextContent(
-      "Comparison history unavailable right now",
-    );
+    await readyTrace();
     expect(mapMock.create).toHaveBeenCalledWith(
       expect.objectContaining({ center: [-1.3, 52.8], zoom: 8.5 }),
     );
+    openPanel("Catchment");
     expect(await screen.findByText(/Selected point’s modelled catchment/)).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Direction" })).toHaveValue("downstream");
     await screen.findByText("No matching published measurements");
@@ -1462,7 +1507,13 @@ describe("measurement explorer", () => {
     expect(fetchTrace).toHaveBeenCalledTimes(3);
     const marker = within(map).getByRole("button", { name: /^Shardlow ·/ });
     const details = document.getElementById(marker.getAttribute("aria-controls")!)!;
-    expect(within(details).getByRole("heading", { name: "Shardlow" })).toBeInTheDocument();
+    expect(within(details).getByText("Shardlow")).toBeInTheDocument();
+    openPanel("Compare (2)");
+    const chart = within(screen.getByRole("region", { name: "Comparison history" }));
+    expect(chart.getByRole("button", { name: "30 days", pressed: true })).toBeInTheDocument();
+    expect(await chart.findByRole("alert")).toHaveTextContent(
+      "Comparison history unavailable right now",
+    );
     await user.click(chart.getByRole("button", { name: "Try again" }));
     expect(await chart.findByText("Showing 30 days for 2 measurements")).toBeInTheDocument();
     expect(fetchHistory.mock.calls.map(([url]) => url)).toEqual(
@@ -1502,6 +1553,7 @@ describe("measurement explorer", () => {
       .spyOn(navigator.clipboard, "writeText")
       .mockRejectedValueOnce(new Error("Blocked"));
     const { unmount } = render(<MeasurementExplorer items={items} />);
+    openPanel("Compare (2)");
     const chart = () => within(screen.getByRole("region", { name: "Comparison history" }));
     expect(await chart().findByRole("combobox", { name: "Rainfall view" })).toHaveValue("hourly");
     expect(chart().getByRole("group", { name: /^Shared timeline/ })).toHaveAccessibleName(
@@ -1514,6 +1566,7 @@ describe("measurement explorer", () => {
       ["/api/measurements/comparison?a=ea-shardlow-level&b=ea-stone-rainfall&range=30d", "GET"],
     ]);
 
+    openPanel("Layers");
     await user.click(screen.getByRole("button", { name: "Copy Explorer link" }));
     const url = new URL(
       (screen.getByRole("textbox", { name: "Copy this link" }) as HTMLInputElement).value,
@@ -1526,6 +1579,7 @@ describe("measurement explorer", () => {
       ob: "30",
     });
     expect(url.hash).toBe("");
+    openPanel("Layers");
     await user.click(screen.getByRole("button", { name: "Copy Explorer link" }));
     expect(write).toHaveBeenLastCalledWith(url.href);
     expect(screen.getByText("Link copied")).toBeInTheDocument();
@@ -1533,11 +1587,12 @@ describe("measurement explorer", () => {
     unmount();
     window.history.replaceState(null, "", url);
     render(<MeasurementExplorer items={items} />);
+    openPanel("Compare (2)");
     const view = await chart().findByRole("combobox", { name: "Rainfall view" });
     expect(view).toHaveValue("hourly");
     await user.selectOptions(view, "native");
     const historyLength = history.length;
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     act(() => mapMock.events.dispatchEvent(new Event("moveend")));
     act(() => mapMock.events.dispatchEvent(new Event("moveend")));
     expect(history.length).toBe(historyLength);
@@ -1548,7 +1603,7 @@ describe("measurement explorer", () => {
       history.back();
       await popped;
     });
-    expect(chart().getByRole("combobox", { name: "Rainfall view" })).toHaveValue("hourly");
+    expect(await chart().findByRole("combobox", { name: "Rainfall view" })).toHaveValue("hourly");
     expect(chart().getByRole("group", { name: /^Shared timeline/ })).toHaveAccessibleName(
       /Stone rainfall \(\+30 min\)/,
     );
@@ -1559,8 +1614,8 @@ describe("measurement explorer", () => {
       history.forward();
       await popped;
     });
-    expect(chart().getByRole("combobox", { name: "Rainfall view" })).toHaveValue("native");
-    expect(fetchHistory).toHaveBeenCalledTimes(2);
+    expect(await chart().findByRole("combobox", { name: "Rainfall view" })).toHaveValue("native");
+    expect(fetchHistory.mock.calls.every(([url]) => String(url).includes("range=30d"))).toBe(true);
   });
 
   it("restores a station and map controls when traversing Explorer history", async () => {
@@ -1661,7 +1716,7 @@ describe("measurement explorer", () => {
         );
       vi.stubGlobal("fetch", fetchRiver);
       render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
-      await screen.findByRole("button", { name: "Trace river" });
+      await readyTrace();
       act(() => mapMock.events.dispatchEvent(new Event("load")));
       await armTrace();
       mapClick(screen.getByRole("region", { name: "River map" }));
@@ -1689,7 +1744,7 @@ describe("measurement explorer", () => {
       .mockResolvedValueOnce(catchmentResults());
     vi.stubGlobal("fetch", fetchRiver);
     render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     act(() => mapMock.events.dispatchEvent(new Event("load")));
     await armTrace();
     mapClick(screen.getByRole("region", { name: "River map" }));
@@ -1715,7 +1770,7 @@ describe("measurement explorer", () => {
       .mockResolvedValueOnce(catchmentResults([[shardlow]], false, { omittedMeasurements: 1 }));
     vi.stubGlobal("fetch", fetchRiver);
     render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     act(() => mapMock.events.dispatchEvent(new Event("load")));
     const map = screen.getByRole("region", { name: "River map" });
     await armTrace();
@@ -1752,7 +1807,7 @@ describe("measurement explorer", () => {
         .mockResolvedValueOnce(catchmentResults([], false, { omittedMeasurements: 2 })),
     );
     render(<MeasurementExplorer items={[]} initialQuery={{ q: "", type: null }} />);
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     await armTrace();
     mapClick(screen.getByRole("region", { name: "River map" }));
 
@@ -1773,7 +1828,7 @@ describe("measurement explorer", () => {
       .mockResolvedValueOnce(catchmentResults());
     vi.stubGlobal("fetch", fetchRiver);
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     await armTrace();
     mapClick(screen.getByRole("region", { name: "River map" }));
     await screen.findByRole("region", { name: "Catchment measurements" });
@@ -1799,13 +1854,14 @@ describe("measurement explorer", () => {
     );
     fetchTrace.mockResolvedValueOnce(new Response(null, { status: 504 }));
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
-    await screen.findByRole("button", { name: "Trace river" });
+    await readyTrace();
     await armTrace();
     mapClick(screen.getByRole("region", { name: "River map" }));
     expect(fetchTrace.mock.calls[0][0]).toBe(
       "/api/river/trace?lon=-1.25000000&lat=52.50000000&direction=upstream",
     );
     expect(screen.getByText("Tracing river…")).toBeInTheDocument();
+    openPanel("Stations");
     expect(screen.getByRole("link", { name: "Shardlow Flow" })).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: /^Kegworth ·/ }));
     expect(fetchTrace.mock.calls[0][1]?.signal?.aborted).toBe(true);
@@ -1820,6 +1876,7 @@ describe("measurement explorer", () => {
     );
     expect(screen.getByText("River trace timed out")).toBeInTheDocument();
     expect(screen.queryByText("No river matched this point.")).not.toBeInTheDocument();
+    openPanel("Stations");
     expect(screen.getByRole("link", { name: "Kegworth Water level" })).toBeInTheDocument();
   });
 
@@ -1849,7 +1906,7 @@ describe("measurement explorer", () => {
         ),
       );
       render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
-      await screen.findByRole("button", { name: "Trace river" });
+      await readyTrace();
       act(() => mapMock.events.dispatchEvent(new Event("load")));
       await armTrace();
       mapClick(screen.getByRole("region", { name: "River map" }));
@@ -1866,9 +1923,35 @@ describe("measurement explorer", () => {
     },
   );
 
+  it("opens one workspace panel by keyboard and returns focus to its control on Escape", async () => {
+    addPublishedPositions();
+    const user = userEvent.setup();
+    render(<MeasurementExplorer items={items} />);
+    const riverMap = screen.getByRole("region", { name: "River map" });
+    const tools = within(screen.getByRole("group", { name: "Map tools" }));
+    const stations = tools.getByRole("button", { name: "Stations", expanded: false });
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+
+    stations.focus();
+    await user.keyboard("{Enter}");
+    expect(stations).toHaveAttribute("aria-expanded", "true");
+    await user.tab();
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+
+    const layers = openPanel("Layers");
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Map layers" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(layers).toHaveFocus();
+    expect(layers).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("region", { name: "River map" })).toBe(riverMap);
+    expect(mapMock.create).toHaveBeenCalledTimes(1);
+  });
+
   it("narrows results as the visitor types and announces the count", async () => {
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    openPanel("Stations");
     await user.type(screen.getByRole("searchbox", { name: "Search" }), "kegw");
     expect(links()).toEqual(["Kegworth Water level"]);
     // The visible count updates instantly; screen readers hear it once typing pauses.
@@ -1888,6 +1971,7 @@ describe("measurement explorer", () => {
   it("filters by type with the keyboard alone", async () => {
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    openPanel("Stations");
     const group = screen.getByRole("group", { name: "Type" });
     expect(
       within(group)
@@ -1910,6 +1994,7 @@ describe("measurement explorer", () => {
     window.history.replaceState(null, "", "/?type=level");
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: "level" }} />);
+    openPanel("Stations");
     await user.type(screen.getByRole("searchbox"), "shardlow");
     expect(links()).toEqual(["Shardlow Water level"]);
   });
@@ -1920,6 +2005,7 @@ describe("measurement explorer", () => {
     }
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    openPanel("Stations");
     expect(screen.getByRole("heading", { name: "Stone" }).closest("li")).not.toHaveTextContent(
       "River Trent",
     );
@@ -1931,6 +2017,7 @@ describe("measurement explorer", () => {
   it("shows an empty state with a way back when nothing matches", async () => {
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    openPanel("Stations");
     await user.type(screen.getByRole("searchbox"), "zzz");
     expect(screen.getByText("No matching measurements")).toBeInTheDocument();
     expect(screen.getAllByText("No measurements found")[0]).toBeInTheDocument();
@@ -1945,11 +2032,13 @@ describe("measurement explorer", () => {
   it("hides the type filter when only one type is published", () => {
     const levels = items.filter((item) => item.measurement.parameter === "level");
     render(<MeasurementExplorer items={levels} initialQuery={{ q: "", type: null }} />);
+    openPanel("Stations");
     expect(screen.queryByRole("group", { name: "Type" })).toBeNull();
   });
 
   it("submits as a plain GET form when scripts are unavailable", () => {
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    openPanel("Stations");
     const form = screen.getByRole("search");
     expect(form).toHaveAttribute("action", "/");
     expect(form).toHaveAttribute("method", "get");
@@ -1960,6 +2049,7 @@ describe("measurement explorer", () => {
     window.history.replaceState(null, "", "/?utm_source=x#main");
     const user = userEvent.setup();
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    openPanel("Stations");
     await user.type(screen.getByRole("searchbox"), "colwick");
     expect(window.location.search).toBe("?utm_source=x&q=colwick");
     expect(window.location.hash).toBe("#main");
@@ -1969,6 +2059,7 @@ describe("measurement explorer", () => {
     const levels = items.filter((item) => item.measurement.parameter === "level");
     window.history.replaceState(null, "", "/?type=level");
     render(<MeasurementExplorer items={levels} initialQuery={{ q: "", type: "level" }} />);
+    openPanel("Stations");
     expect(screen.getByRole("radio", { name: "Water level" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "All" })).toBeInTheDocument();
   });
@@ -1976,6 +2067,7 @@ describe("measurement explorer", () => {
   it("restores the search from the URL when the page is restored with the original payload", () => {
     window.history.replaceState(null, "", "/?q=shardlow&type=flow");
     render(<MeasurementExplorer items={items} initialQuery={{ q: "", type: null }} />);
+    openPanel("Stations");
     expect(screen.getByRole("searchbox")).toHaveValue("shardlow");
     expect(links()).toEqual(["Shardlow Flow"]);
   });

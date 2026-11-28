@@ -46,12 +46,12 @@ export function StationSelection({
   return (
     <section
       aria-labelledby={headingId}
-      className="flex max-h-[min(13rem,55svh)] flex-col overflow-hidden border-t border-line bg-surface text-sm lg:absolute lg:inset-0 lg:max-h-full lg:border-0"
+      className="pointer-events-auto flex max-h-full flex-col overflow-hidden rounded-lg border border-line bg-surface text-sm shadow-md"
       onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
+        if (event.key === "Escape" && !event.defaultPrevented) onClose();
       }}
     >
-      <header className="flex shrink-0 flex-wrap items-center gap-x-2 px-3 py-1.5">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-2 px-2 py-1.5 sm:px-3">
         <div className="min-w-0 flex-1 py-1">
           <h2 id={headingId} ref={headingRef} tabIndex={-1} className="font-semibold wrap-anywhere">
             {name}

@@ -14,25 +14,22 @@ export function MeasurementList({
   comparisonAction?: (measurement: PublicMeasurement) => ReactNode;
 }) {
   return (
-    <ul className="space-y-4">
+    <ul className="divide-y divide-line">
       {groups.map((group) => (
-        <li
-          key={group.stationId}
-          className="overflow-hidden rounded-lg border border-line bg-surface"
-        >
-          <div className="px-5 pt-4 pb-3 sm:px-6">
-            <h3 className="text-lg font-semibold tracking-tight">{group.name}</h3>
+        <li key={group.stationId}>
+          <div className="pt-3 pb-1">
+            <h3 className="text-base font-semibold">{group.name}</h3>
             {group.watercourseName ? (
               <p className="text-sm text-ink-muted">{group.watercourseName}</p>
             ) : null}
           </div>
-          <ul className="divide-y divide-line border-t border-line">
+          <ul className="divide-y divide-line">
             {group.items.map(({ measurement, latest }) => (
               <li
                 key={measurement.measurementId}
                 className="relative transition-colors hover:bg-canvas"
               >
-                <div className="flex flex-col gap-1 px-5 py-3.5 sm:px-6 @lg:grid @lg:grid-cols-[11rem_minmax(0,1fr)] @lg:items-baseline @lg:gap-6">
+                <div className="flex flex-col gap-1 py-2 @lg:grid @lg:grid-cols-[11rem_minmax(0,1fr)] @lg:items-baseline @lg:gap-6">
                   {/* The link covers the row behind the separate comparison action. */}
                   <Link
                     href={measurementPath(measurement.measurementId)}

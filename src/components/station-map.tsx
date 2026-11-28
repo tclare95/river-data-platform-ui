@@ -1,7 +1,18 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type KeyboardEvent,
+  type SetStateAction,
+  type ReactNode,
+} from "react";
 import type { Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import { Button } from "@/components/button";
 import { CatchmentMeasurements, type CatchmentDiscovery } from "./catchment-measurements";
@@ -65,6 +76,11 @@ function pointQuery([lon, lat]: TracePoint) {
   return new URLSearchParams({ lon: lon.toFixed(8), lat: lat.toFixed(8) });
 }
 
+export type WorkspacePanel = "stations" | "layers" | "catchment" | "comparison";
+
+const panelClass =
+  "explorer-panel min-w-0 overflow-y-auto overscroll-contain rounded-lg border border-line bg-surface p-3 text-sm shadow-md";
+
 type LocatedStation = StationGroup &
   Pick<PublicMeasurement, "locationEvidence" | "source"> & {
     position: NonNullable<PublicMeasurement["position"]>;
@@ -82,6 +98,13 @@ export function StationMap({
   initialContext,
   onMapUrlChange,
   comparisonAction,
+  comparisonCount,
+  shareControls,
+  comparison,
+  comparisonHistory,
+  stationList,
+  panel,
+  setPanel,
 }: {
   stations: readonly LocatedStation[];
   items: readonly OverviewItem[];
@@ -89,12 +112,22 @@ export function StationMap({
   initialContext: MapContext;
   onMapUrlChange: (context: MapContext) => void;
   comparisonAction: (measurement: PublicMeasurement) => ReactNode;
+  comparisonCount: number;
+  shareControls: ReactNode;
+  comparison: ReactNode;
+  comparisonHistory: ReactNode;
+  stationList: ReactNode;
+  panel: WorkspacePanel | null;
+  setPanel: Dispatch<SetStateAction<WorkspacePanel | null>>;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const focusSelection = useRef(false);
   const detailsId = useId();
   const { view: initialView, station: initialStationId, trace: initialTrace } = initialContext;
+  const panelId = useId();
+  const traceButtonId = useId();
+  const panelFocus = useRef(false);
   const pushMapChange = useRef(false);
   const writeMap = useCallback(
     (params: Record<string, string | undefined>, push = false) => {
@@ -133,7 +166,10 @@ export function StationMap({
   const inventoryKey = inventorySelection?.key;
   const [collapsed, setCollapsed] = useState(false);
   const [browseInventory, setBrowseInventory] = useState(0);
-  const showInventoryPicker = useCallback(() => setBrowseInventory((value) => value + 1), []);
+  const showInventoryPicker = useCallback(() => {
+    setPanel("layers");
+    setBrowseInventory((value) => value + 1);
+  }, [setPanel]);
   const [showStations, setShowStations] = useState(initialContext.showStations ?? true);
   const [choosingTracePoint, setChoosingTracePoint] = useState(false);
   const [tracePending, setTracePending] = useState(false);
@@ -160,6 +196,19 @@ export function StationMap({
     );
   }, []);
 
+  const showStationPanel = useCallback(
+    (sameStation: boolean) => {
+      const title = heading.current;
+      if (sameStation && title && !title.closest("[hidden]")) {
+        title.focus({ preventScroll: true });
+      } else {
+        focusSelection.current = true;
+      }
+      setPanel(null);
+    },
+    [setPanel],
+  );
+
   const selectInventory = useCallback(
     (station: InventoryStation) => {
       if (selectedId || inventoryKey !== station.key) {
@@ -167,12 +216,11 @@ export function StationMap({
         cancelTrace();
       }
       select(undefined);
-      if (inventoryKey === station.key) heading.current?.focus();
-      else focusSelection.current = true;
+      showStationPanel(inventoryKey === station.key);
       setCollapsed(false);
       setInventorySelection({ key: station.key, station });
     },
-    [cancelTrace, inventoryKey, selectedId],
+    [cancelTrace, inventoryKey, selectedId, showStationPanel],
   );
 
   const clearTrace = () => {
@@ -180,6 +228,8 @@ export function StationMap({
     cancelTrace();
     discoveryRequest.current?.abort();
     setTrace(undefined);
+    setPanel(null);
+    document.getElementById(traceButtonId)?.focus({ preventScroll: true });
   };
 
   const findMeasurements = useCallback(async (point: TracePoint, upstreamResult: TraceResult) => {
@@ -290,6 +340,10 @@ export function StationMap({
       void traceFrom(point, "upstream", {
         onCommit: () => {
           pushMapChange.current = true;
+          if (document.getElementById(detailsId)?.contains(document.activeElement)) {
+            panelFocus.current = true;
+          }
+          setPanel((current) => current ?? "catchment");
           if (fromMap) {
             select(undefined);
             setInventorySelection(undefined);
@@ -297,7 +351,7 @@ export function StationMap({
         },
       });
     },
-    [traceFrom],
+    [detailsId, setPanel, traceFrom],
   );
 
   const discovery = trace?.discovery;
@@ -415,6 +469,30 @@ export function StationMap({
   }, [initialCamera, initialTrace, traceFrom]);
 
   const unavailable = status === "unavailable";
+  const activePanel =
+    unavailable && panel !== "comparison" && panel !== "layers" ? "stations" : panel;
+
+  useEffect(() => {
+    if (activePanel && panelFocus.current) {
+      document.getElementById(`${panelId}-${activePanel}-panel`)?.focus({ preventScroll: true });
+    }
+    panelFocus.current = false;
+  }, [activePanel, panelId]);
+
+  function togglePanel(next: WorkspacePanel) {
+    if (activePanel === next) {
+      setPanel(null);
+    } else {
+      panelFocus.current = true;
+      setPanel(next);
+    }
+  }
+
+  function closePanel() {
+    if (!activePanel || (unavailable && activePanel === "stations")) return;
+    setPanel(null);
+    document.getElementById(`${panelId}-${activePanel}`)?.focus({ preventScroll: true });
+  }
   const map = renderer?.map;
   const inventory = useViewportInventory(unavailable ? undefined : map);
   const inventoryStations =
@@ -612,8 +690,7 @@ export function StationMap({
       const button = stationMarkerButton(name, marker, match, stationId === selectedId);
       button.setAttribute("aria-controls", detailsId);
       button.onclick = () => {
-        if (selectedId === stationId) heading.current?.focus();
-        else focusSelection.current = true;
+        showStationPanel(selectedId === stationId);
         if (inventoryKey || selectedId !== stationId) {
           pushMapChange.current = true;
           cancelTrace();
@@ -636,6 +713,7 @@ export function StationMap({
     unavailable,
     filteredStationIds,
     selectedId,
+    showStationPanel,
     inventoryKey,
     showStations,
   ]);
@@ -647,9 +725,10 @@ export function StationMap({
       ? `station:${selected.stationId}`
       : undefined;
   useEffect(() => {
-    if (selectionKey && focusSelection.current) heading.current?.focus();
+    if (activePanel) return;
+    if (selectionKey && focusSelection.current) heading.current?.focus({ preventScroll: true });
     focusSelection.current = false;
-  }, [selectionKey]);
+  }, [activePanel, selectionKey]);
 
   const latestById = useMemo(
     () => new Map(items.map(({ measurement, latest }) => [measurement.measurementId, latest])),
@@ -686,15 +765,68 @@ export function StationMap({
     container.current?.focus({ preventScroll: true });
   }
 
-  const showSelection = !!activeStation && !unavailable;
+  const panelButtons: { name: WorkspacePanel; label: string }[] = [
+    { name: "stations", label: "Stations" },
+    { name: "layers", label: "Layers" },
+  ];
+  if (!unavailable) panelButtons.push({ name: "catchment", label: "Catchment" });
+  if (items.length) {
+    panelButtons.push({ name: "comparison", label: `Compare (${comparisonCount})` });
+  }
+
+  function panelProps(name: WorkspacePanel) {
+    return {
+      id: `${panelId}-${name}-panel`,
+      tabIndex: -1,
+      hidden: activePanel !== name,
+      onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.key === "Escape" && !event.defaultPrevented) closePanel();
+      },
+    };
+  }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-line bg-surface">
+    <div
+      className="explorer-workspace flex min-h-0 flex-1 flex-col rounded-lg border border-line bg-surface [@media(scripting:none)]:border-0"
+      data-map-unavailable={unavailable || undefined}
+    >
       <div
-        className={
-          showSelection ? "lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(14rem,35%)]" : undefined
-        }
+        role="group"
+        aria-label="Map tools"
+        className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line p-1.5 [@media(scripting:none)]:hidden"
       >
+        {!unavailable && (
+          <Button
+            id={traceButtonId}
+            aria-pressed={choosingTracePoint}
+            className="px-2! aria-pressed:border-accent aria-pressed:bg-accent-soft sm:px-3.5!"
+            disabled={!map || tracePending}
+            onClick={() => {
+              setChoosingTracePoint(!choosingTracePoint);
+              if (!choosingTracePoint) setPanel(null);
+            }}
+          >
+            Trace river
+          </Button>
+        )}
+        {panelButtons.map(({ name, label }) => (
+          <Button
+            key={name}
+            id={`${panelId}-${name}`}
+            disabled={
+              (name === "catchment" && !trace) ||
+              (unavailable && name === "stations" && activePanel === name)
+            }
+            aria-expanded={activePanel === name}
+            aria-controls={`${panelId}-${name}-panel`}
+            className="px-2! aria-expanded:border-accent aria-expanded:bg-accent-soft sm:px-3.5!"
+            onClick={() => togglePanel(name)}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+      <div className={unavailable ? "relative min-h-72" : "relative min-h-0 flex-1"}>
         {/* MapLibre adds its own classes to the container, so keep className stable. */}
         <div
           ref={container}
@@ -703,11 +835,53 @@ export function StationMap({
           tabIndex={-1}
           hidden={unavailable}
           data-tracing={choosingTracePoint}
-          className="h-72 bg-canvas sm:h-96 lg:h-[clamp(26rem,60svh,42rem)] data-[tracing=true]:[&_.maplibregl-canvas]:cursor-crosshair"
+          className="h-full rounded-b-lg bg-canvas data-[tracing=true]:[&_.maplibregl-canvas]:cursor-crosshair [@media(scripting:none)]:hidden"
         />
+        {unavailable ? (
+          <ErrorState title="River map unavailable" className="m-2">
+            Browse the station list.
+          </ErrorState>
+        ) : null}
+        {!unavailable && (status !== "ready" || choosingTracePoint || tracePending) ? (
+          <div className="absolute top-2 left-2 z-10 max-w-[calc(100%-4rem)] space-y-2 rounded-md bg-surface p-2 text-sm shadow [@media(scripting:none)]:hidden">
+            <p role="status" className="text-ink-muted">
+              {choosingTracePoint
+                ? "Select a point on a river to trace its upstream catchment."
+                : tracePending
+                  ? "Tracing river…"
+                  : status === "loading"
+                    ? "Loading map…"
+                    : "Some basemap details could not load."}
+            </p>
+            {choosingTracePoint || tracePending ? (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() => {
+                    cancelTrace();
+                    document.getElementById(traceButtonId)?.focus({ preventScroll: true });
+                  }}
+                >
+                  Cancel trace
+                </Button>
+                {choosingTracePoint && map ? (
+                  <Button
+                    onClick={() => {
+                      const { lng, lat } = map.getCenter().wrap();
+                      selectPoint([lng, lat], true);
+                      container.current?.focus({ preventScroll: true });
+                    }}
+                  >
+                    Select map centre
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div
           id={detailsId}
-          className="relative empty:hidden lg:border-l lg:border-line lg:bg-canvas"
+          hidden={activePanel !== null || !activeStation || unavailable}
+          className="explorer-station-panel pointer-events-none [@media(scripting:none)]:hidden"
         >
           {activeStation && selectionKey && !unavailable ? (
             <StationSelection
@@ -746,245 +920,240 @@ export function StationMap({
             </StationSelection>
           ) : null}
         </div>
-      </div>
-      {unavailable ? (
-        <ErrorState title="River map unavailable">Browse the station list.</ErrorState>
-      ) : status === "tiles" || status === "loading" ? (
-        <p role="status" className="px-4 py-2 text-sm text-ink-muted">
-          {status === "loading" ? "Loading map…" : "Some basemap details could not load."}
-        </p>
-      ) : null}
-      {map && !unavailable ? (
-        <div className="space-y-2 border-t border-line px-5 py-3 sm:px-6">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              aria-pressed={choosingTracePoint}
-              className="aria-pressed:border-accent aria-pressed:bg-accent-soft"
-              disabled={tracePending}
-              onClick={() => setChoosingTracePoint(!choosingTracePoint)}
-            >
-              Trace river
-            </Button>
-            {choosingTracePoint || tracePending ? (
-              <Button onClick={cancelTrace}>Cancel trace</Button>
-            ) : null}
-            {stations.length > 0 ? (
-              <Button
-                aria-pressed={showStations}
-                className="aria-pressed:border-accent aria-pressed:bg-accent-soft"
-                onClick={() => {
-                  pushMapChange.current = true;
-                  setShowStations(!showStations);
-                }}
-              >
-                Published stations
-              </Button>
-            ) : null}
-            {trace ? (
-              <>
-                <label className="flex items-center gap-2 text-sm">
-                  Direction
-                  <select
-                    className="min-h-10 rounded-md border border-line-input bg-surface px-2"
-                    value={direction}
-                    disabled={tracePending || choosingTracePoint}
-                    onChange={(event) => {
-                      const next = event.target.value as RiverDirection;
-                      if (next === direction) return;
-                      void traceFrom(trace.point, next, {
-                        previous: trace,
-                        onCommit: () => {
-                          pushMapChange.current = true;
-                        },
-                      });
-                    }}
-                  >
-                    <option value="downstream">Downstream</option>
-                    <option value="upstream">Upstream</option>
-                  </select>
-                </label>
-                <Button onClick={clearTrace}>Clear catchment</Button>
-              </>
-            ) : null}
-            {choosingTracePoint ? (
-              <Button
-                onClick={() => {
-                  const { lng, lat } = map.getCenter().wrap();
-                  selectPoint([lng, lat], true);
-                  container.current?.focus({ preventScroll: true });
-                }}
-              >
-                Select map centre
-              </Button>
-            ) : null}
-          </div>
-          <p role="status" className="text-sm text-ink-muted">
-            {choosingTracePoint
-              ? "Select a point on a river to trace its upstream catchment."
-              : tracePending
-                ? "Tracing river…"
-                : null}
-          </p>
-          {showStations &&
-          stations.length > 0 &&
-          !stations.some(({ stationId }) => filteredStationIds.has(stationId)) ? (
-            <p className="text-sm text-ink-muted">No matching stations have verified locations</p>
-          ) : null}
-          <StationMarkerControls filters={filters} onChange={setFilters} />
-          <InventoryPanel
-            view={inventory.view}
-            visibleStations={visibleInventory}
-            retry={inventory.retry}
-            selected={inventorySelected}
-            onSelect={selectInventory}
-            browse={browseInventory}
-          />
-          <details className="text-sm text-ink-muted">
-            <summary className="flex min-h-11 cursor-pointer items-center underline">
-              Map sources and coverage
-            </summary>
-            <p>
-              Basemap by{" "}
-              <a className="link" href="https://openfreemap.org/">
-                OpenFreeMap
-              </a>{" "}
-              using OpenStreetMap data.
-            </p>
-            <p>
-              Drainage area overview boundaries are currently unavailable. Select a river point to
-              check for a modelled upstream catchment.
-            </p>
-          </details>
+        <div
+          {...panelProps("stations")}
+          className={unavailable ? "p-3" : `${panelClass} explorer-stations`}
+        >
+          {stationList}
         </div>
-      ) : null}
-      {trace && !unavailable ? (
-        <div className="space-y-2 border-t border-line px-5 py-3 text-sm sm:px-6">
-          <p className="flex flex-wrap gap-x-4 gap-y-1 text-ink-muted">
-            <span className="inline-flex items-center gap-1.5">
-              <span aria-hidden="true" className="size-3 rounded-full border-2 border-ink" />
-              Selected point
-            </span>
-            {snapped?.position ? (
-              <span className="inline-flex items-center gap-1.5">
-                <span aria-hidden="true" className="size-2 rounded-full bg-compare-secondary" />
-                Snapped sample · {Math.round(snapped.snapOffsetM)} m away
-              </span>
-            ) : null}
-            {showCatchment && catchment?.pourPointOffsetM === 0 && snapped?.position ? (
-              <span className="inline-flex items-center gap-1.5">
-                <span aria-hidden="true" className="size-3 rounded-full border-2 border-accent" />
-                Catchment pour point · at the snapped sample
-              </span>
-            ) : null}
-          </p>
-          <div role="status" className="space-y-1">
-            {result ? (
-              <>
-                <p>
-                  {matchLabels[result.matchStatus]}
-                  {result.route
-                    ? ` · ${result.route.direction} route ${result.route.completeness}`
-                    : null}
-                  {result.matchStatus === "Matched" && !traceGeometry(result)
-                    ? " · No route geometry to display"
-                    : null}
+        <div
+          {...panelProps("layers")}
+          aria-label="Map layers"
+          role="region"
+          className={unavailable ? "space-y-2 p-3" : `${panelClass} space-y-2`}
+        >
+          {map && !unavailable ? (
+            <>
+              {stations.length > 0 ? (
+                <Button
+                  aria-pressed={showStations}
+                  className="aria-pressed:border-accent aria-pressed:bg-accent-soft"
+                  onClick={() => {
+                    pushMapChange.current = true;
+                    setShowStations(!showStations);
+                  }}
+                >
+                  Published stations
+                </Button>
+              ) : null}
+              {showStations &&
+              stations.length > 0 &&
+              !stations.some(({ stationId }) => filteredStationIds.has(stationId)) ? (
+                <p className="text-sm text-ink-muted">
+                  No matching stations have verified locations
                 </p>
-                {direction === "upstream" && result.matchStatus === "Matched" && !catchment ? (
-                  <p>Catchment boundary unavailable for this trace.</p>
-                ) : null}
-              </>
-            ) : (
-              <p>{trace.error}</p>
-            )}
-          </div>
-          {provenance ? (
-            <p className="break-words text-ink-muted">
-              Release {provenance.release.releaseId} · {provenance.release.version.slice(0, 12)}
-              {provenance.attribution ? ` · ${provenance.attribution}` : null}
-            </p>
+              ) : null}
+              <StationMarkerControls filters={filters} onChange={setFilters} />
+              <InventoryPanel
+                view={inventory.view}
+                visibleStations={visibleInventory}
+                retry={inventory.retry}
+                selected={inventorySelected}
+                onSelect={selectInventory}
+                browse={browseInventory}
+              />
+              <details className="text-sm text-ink-muted">
+                <summary className="flex min-h-11 cursor-pointer items-center underline">
+                  Map sources and coverage
+                </summary>
+                <p>
+                  Basemap by{" "}
+                  <a className="link" href="https://openfreemap.org/">
+                    OpenFreeMap
+                  </a>{" "}
+                  using OpenStreetMap data.
+                </p>
+                <p>
+                  Drainage area overview boundaries are currently unavailable. Select a river point
+                  to check for a modelled upstream catchment.
+                </p>
+              </details>
+            </>
           ) : null}
-          {upstream || downstream || catchment ? (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-              {(["upstream", "downstream"] as const).map((layer) => {
-                if (!(layer === "upstream" ? upstream : downstream)) return null;
-                return (
-                  <label key={layer} className="inline-flex min-h-11 items-center gap-2">
-                    <input
-                      type="checkbox"
-                      className="size-4 accent-accent"
-                      checked={!trace.hiddenRoutes?.[layer]}
-                      onChange={(event) => {
-                        const hidden = !event.target.checked;
+          {shareControls}
+        </div>
+        <div
+          {...panelProps("catchment")}
+          role="region"
+          aria-label="Catchment"
+          className={`${panelClass} space-y-2`}
+        >
+          {trace && !unavailable ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                {trace ? (
+                  <>
+                    <label className="flex items-center gap-2 text-sm">
+                      Direction
+                      <select
+                        className="min-h-10 rounded-md border border-line-input bg-surface px-2"
+                        value={direction}
+                        disabled={tracePending || choosingTracePoint}
+                        onChange={(event) => {
+                          const next = event.target.value as RiverDirection;
+                          if (next === direction) return;
+                          void traceFrom(trace.point, next, {
+                            previous: trace,
+                            onCommit: () => {
+                              pushMapChange.current = true;
+                            },
+                          });
+                        }}
+                      >
+                        <option value="downstream">Downstream</option>
+                        <option value="upstream">Upstream</option>
+                      </select>
+                    </label>
+                    <Button onClick={clearTrace}>Clear catchment</Button>
+                  </>
+                ) : null}
+              </div>
+              <p className="flex flex-wrap gap-x-4 gap-y-1 text-ink-muted">
+                <span className="inline-flex items-center gap-1.5">
+                  <span aria-hidden="true" className="size-3 rounded-full border-2 border-ink" />
+                  Selected point
+                </span>
+                {snapped?.position ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span aria-hidden="true" className="size-2 rounded-full bg-compare-secondary" />
+                    Snapped sample · {Math.round(snapped.snapOffsetM)} m away
+                  </span>
+                ) : null}
+                {showCatchment && catchment?.pourPointOffsetM === 0 && snapped?.position ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      aria-hidden="true"
+                      className="size-3 rounded-full border-2 border-accent"
+                    />
+                    Catchment pour point · at the snapped sample
+                  </span>
+                ) : null}
+              </p>
+              <div role="status" className="space-y-1">
+                {result ? (
+                  <>
+                    <p>
+                      {matchLabels[result.matchStatus]}
+                      {result.route
+                        ? ` · ${result.route.direction} route ${result.route.completeness}`
+                        : null}
+                      {result.matchStatus === "Matched" && !traceGeometry(result)
+                        ? " · No route geometry to display"
+                        : null}
+                    </p>
+                    {direction === "upstream" && result.matchStatus === "Matched" && !catchment ? (
+                      <p>Catchment boundary unavailable for this trace.</p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p>{trace.error}</p>
+                )}
+              </div>
+              {provenance ? (
+                <p className="break-words text-ink-muted">
+                  Release {provenance.release.releaseId} · {provenance.release.version.slice(0, 12)}
+                  {provenance.attribution ? ` · ${provenance.attribution}` : null}
+                </p>
+              ) : null}
+              {upstream || downstream || catchment ? (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  {(["upstream", "downstream"] as const).map((layer) => {
+                    if (!(layer === "upstream" ? upstream : downstream)) return null;
+                    return (
+                      <label key={layer} className="inline-flex min-h-11 items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="size-4 accent-accent"
+                          checked={!trace.hiddenRoutes?.[layer]}
+                          onChange={(event) => {
+                            const hidden = !event.target.checked;
+                            pushMapChange.current = true;
+                            setTrace(
+                              (current) =>
+                                current && {
+                                  ...current,
+                                  hiddenRoutes: { ...current.hiddenRoutes, [layer]: hidden },
+                                },
+                            );
+                          }}
+                        />
+                        <span
+                          aria-hidden="true"
+                          className={
+                            layer === "upstream"
+                              ? "h-0.5 w-3 bg-compare-tertiary"
+                              : "h-0.5 w-3 bg-compare-secondary"
+                          }
+                        />
+                        {layer === "upstream" ? "Upstream reaches" : "Downstream route"}
+                      </label>
+                    );
+                  })}
+                  {catchment ? (
+                    <Button
+                      className="min-h-11"
+                      onClick={() => {
                         pushMapChange.current = true;
                         setTrace(
                           (current) =>
                             current && {
                               ...current,
-                              hiddenRoutes: { ...current.hiddenRoutes, [layer]: hidden },
+                              showCatchment: current.showCatchment === false,
                             },
                         );
                       }}
-                    />
-                    <span
-                      aria-hidden="true"
-                      className={
-                        layer === "upstream"
-                          ? "h-0.5 w-3 bg-compare-tertiary"
-                          : "h-0.5 w-3 bg-compare-secondary"
-                      }
-                    />
-                    {layer === "upstream" ? "Upstream reaches" : "Downstream route"}
-                  </label>
-                );
-              })}
-              {catchment ? (
-                <Button
-                  className="min-h-11"
-                  onClick={() => {
-                    pushMapChange.current = true;
-                    setTrace(
-                      (current) =>
-                        current && {
-                          ...current,
-                          showCatchment: current.showCatchment === false,
-                        },
-                    );
+                    >
+                      {showCatchment ? "Hide catchment" : "Show catchment"}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+              {showCatchment && catchment ? (
+                <div className="space-y-1 text-ink-muted">
+                  <p>
+                    <strong className="text-ink">
+                      Selected point’s modelled catchment · {formatArea.format(catchment.areaKm2)}{" "}
+                      km²
+                    </strong>
+                  </p>
+                  <p>Source · {catchment.sourceNetworkRelease}</p>
+                  {catchment.pourPointOffsetM > 0 ? (
+                    <p>
+                      The catchment pour point is a published sample{" "}
+                      {formatArea.format(catchment.pourPointOffsetM)} m downstream of the snapped
+                      river sample for the selected point.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {trace && catchment ? (
+                <CatchmentMeasurements
+                  discovery={discovery ?? { status: "loading" }}
+                  find={() => {
+                    if (upstreamResult) void findMeasurements(trace.point, upstreamResult);
                   }}
-                >
-                  {showCatchment ? "Hide catchment" : "Show catchment"}
-                </Button>
+                  refreshTrace={() => selectPoint(trace.point)}
+                  comparisonAction={comparisonAction}
+                />
               ) : null}
-            </div>
-          ) : null}
-          {showCatchment && catchment ? (
-            <div className="space-y-1 text-ink-muted">
-              <p>
-                <strong className="text-ink">
-                  Selected point’s modelled catchment · {formatArea.format(catchment.areaKm2)} km²
-                </strong>
-              </p>
-              <p>Source · {catchment.sourceNetworkRelease}</p>
-              {catchment.pourPointOffsetM > 0 ? (
-                <p>
-                  The catchment pour point is a published sample{" "}
-                  {formatArea.format(catchment.pourPointOffsetM)} m downstream of the snapped river
-                  sample for the selected point.
-                </p>
-              ) : null}
-            </div>
+            </>
           ) : null}
         </div>
-      ) : null}
-      {trace && catchment ? (
-        <CatchmentMeasurements
-          discovery={discovery ?? { status: "loading" }}
-          find={() => {
-            if (upstreamResult) void findMeasurements(trace.point, upstreamResult);
-          }}
-          refreshTrace={() => selectPoint(trace.point)}
-          comparisonAction={comparisonAction}
-        />
-      ) : null}
+        <div {...panelProps("comparison")} className={unavailable ? "p-3" : panelClass}>
+          {comparison}
+          {activePanel === "comparison" ? comparisonHistory : null}
+        </div>
+      </div>
     </div>
   );
 }

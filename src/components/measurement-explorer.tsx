@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { InlineComparison } from "@/components/compare/inline-comparison";
 import { MeasurementList } from "@/components/measurement-list";
-import { StationMap } from "@/components/station-map";
+import { StationMap, type WorkspacePanel } from "@/components/station-map";
 import { EmptyState, ErrorState } from "@/components/states";
 import { Button } from "@/components/button";
 import { COMPARE_SLOTS, compareHref, comparisonLabel, needsMoreCompareAxes } from "@/lib/compare";
@@ -89,6 +89,9 @@ export function MeasurementExplorer({
     presentation,
     invalidSelection,
   } = state;
+  const [panel, setPanel] = useState<WorkspacePanel | null>(() =>
+    state.map.trace && !state.map.station && !state.map.inventory ? "catchment" : null,
+  );
   const [mapRestore, setMapRestore] = useState({ context: state.map, revision: 0 });
   const currentMap = useRef(JSON.stringify(explorerMapParams(state.map)));
   const shareInput = useRef<HTMLInputElement>(null);
@@ -115,6 +118,7 @@ export function MeasurementExplorer({
       if (mapKey !== currentMap.current) {
         currentMap.current = mapKey;
         setMapRestore(({ revision }) => ({ context: next.map, revision: revision + 1 }));
+        if (!next.map.trace) setPanel((current) => (current === "catchment" ? null : current));
       }
       setState(next);
       setShareResult({ copied: false, url: "" });
@@ -218,13 +222,20 @@ export function MeasurementExplorer({
   }, [count, filtered]);
 
   return (
-    <div className="flex flex-col gap-8">
-      <div className="min-w-0 [@media(scripting:none)]:hidden">
-        <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+    <StationMap
+      key={mapRestore.revision}
+      panel={panel}
+      setPanel={setPanel}
+      stations={stations}
+      items={items}
+      filteredStationIds={filteredStationIds}
+      initialContext={mapRestore.context}
+      onMapUrlChange={rememberMap}
+      comparisonAction={addToComparison}
+      comparisonCount={selected.length}
+      shareControls={
+        <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => void copyExplorerLink()}>Copy Explorer link</Button>
-          <a href={`#${listId}`} className="link text-sm">
-            Browse stations
-          </a>
           <span aria-live="polite" className="text-sm">
             {shareResult.copied ? "Link copied" : ""}
           </span>
@@ -240,72 +251,66 @@ export function MeasurementExplorer({
             </label>
           ) : null}
         </div>
-        <StationMap
-          key={mapRestore.revision}
-          stations={stations}
-          items={items}
-          filteredStationIds={filteredStationIds}
-          initialContext={mapRestore.context}
-          onMapUrlChange={rememberMap}
-          comparisonAction={addToComparison}
-        />
-        {invalidSelection && !catalogueUnavailable ? (
-          <p className="mt-3 text-sm text-ink-muted">
-            Some measurements in this link could not be included.
-          </p>
-        ) : null}
-        {items.length > 0 ? (
-          <section
-            aria-label="Comparison selection"
-            className="mt-5 rounded-lg border border-line bg-surface px-4 py-2"
-          >
-            <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-3">
-              <p aria-live="polite" className="text-sm font-medium">
-                {selected.length === 0
-                  ? "Add measurements to compare"
-                  : `${selected.length} of ${COMPARE_SLOTS.length} selected`}
-                {selected.length === 1 ? " · Add another to compare" : ""}
-              </p>
-              {selected.length >= 2 ? (
-                <Link
-                  href={compareHref(ids, sharedRange)}
-                  prefetch={false}
-                  className="inline-flex min-h-10 items-center rounded-md bg-accent px-4 text-sm font-semibold text-surface hover:bg-accent-strong"
-                >
-                  Open full comparison
-                </Link>
-              ) : null}
-            </div>
-            {selected.length > 0 ? (
-              <ul aria-label="Selected measurements" className="mt-1 flex flex-wrap gap-1.5">
-                {selected.map((measurement) => (
-                  <li
-                    key={measurement.measurementId}
-                    className="flex items-center gap-2 rounded-md border border-line px-2 text-sm"
+      }
+      comparison={
+        <>
+          {invalidSelection && !catalogueUnavailable ? (
+            <p className="mb-2 text-sm text-ink-muted">
+              Some measurements in this link could not be included.
+            </p>
+          ) : null}
+          {items.length > 0 ? (
+            <section aria-label="Comparison selection">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p aria-live="polite" className="text-sm font-medium">
+                  {selected.length === 0
+                    ? "Add measurements to compare"
+                    : `${selected.length} of ${COMPARE_SLOTS.length} selected`}
+                  {selected.length === 1 ? " · Add another to compare" : ""}
+                </p>
+                {selected.length >= 2 ? (
+                  <Link
+                    href={compareHref(ids, sharedRange)}
+                    prefetch={false}
+                    className="inline-flex min-h-10 items-center rounded-md bg-accent px-4 text-sm font-semibold text-surface hover:bg-accent-strong"
                   >
-                    {comparisonLabel(measurement)}
-                    <button
-                      type="button"
-                      aria-label={`Remove ${comparisonLabel(measurement)}`}
-                      className="link min-h-10"
-                      onClick={() => {
-                        const offsets = { ...presentation.offsets };
-                        delete offsets[measurement.measurementId];
-                        updateComparison({
-                          ids: ids.filter((id) => id !== measurement.measurementId),
-                          presentation: { ...presentation, offsets },
-                        });
-                      }}
+                    Open full comparison
+                  </Link>
+                ) : null}
+              </div>
+              {selected.length > 0 ? (
+                <ul aria-label="Selected measurements" className="mt-1 flex flex-wrap gap-1.5">
+                  {selected.map((measurement) => (
+                    <li
+                      key={measurement.measurementId}
+                      className="flex items-center gap-2 rounded-md border border-line px-2 text-sm"
                     >
-                      Remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </section>
-        ) : null}
-        {ids.length >= 2 ? (
+                      {comparisonLabel(measurement)}
+                      <button
+                        type="button"
+                        aria-label={`Remove ${comparisonLabel(measurement)}`}
+                        className="link min-h-10"
+                        onClick={() => {
+                          const offsets = { ...presentation.offsets };
+                          delete offsets[measurement.measurementId];
+                          updateComparison({
+                            ids: ids.filter((id) => id !== measurement.measurementId),
+                            presentation: { ...presentation, offsets },
+                          });
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : null}
+        </>
+      }
+      comparisonHistory={
+        ids.length >= 2 ? (
           <InlineComparison
             ids={ids}
             range={range}
@@ -313,118 +318,115 @@ export function MeasurementExplorer({
             presentation={presentation}
             onPresentationChange={(presentation) => updateComparison({ presentation })}
           />
-        ) : null}
-      </div>
-      <section aria-labelledby={listId} className="@container w-full max-w-4xl min-w-0">
-        <h2 id={listId} tabIndex={-1} className="mb-3 text-lg font-semibold">
-          Stations
-        </h2>
-        {items.length > 0 ? (
-          <>
-            <form
-              role="search"
-              action="/"
-              method="get"
-              onSubmit={(event) => event.preventDefault()}
-              className="space-y-4 sm:flex sm:flex-wrap sm:items-end sm:gap-x-6 sm:gap-y-4 sm:space-y-0"
-            >
-              {Object.entries({
-                ...explorerComparisonParams(state),
-                ...explorerMapParams(mapRestore.context),
-              }).map(([name, value]) =>
-                value === undefined ? null : (
-                  <input key={name} type="hidden" name={name} value={value} />
-                ),
-              )}
-              <div className="sm:w-80">
-                <label htmlFor={searchId} className="block text-sm font-medium">
-                  Search
-                </label>
-                <input
-                  id={searchId}
-                  type="search"
-                  name="q"
-                  value={q}
-                  maxLength={MAX_QUERY_LENGTH}
-                  onChange={(event) => updateSearch({ q: event.target.value, type })}
-                  placeholder="Station, river or measurement type"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="mt-1.5 block h-11 w-full max-w-copy rounded-md border border-line-input bg-surface px-3 text-base placeholder:text-ink-muted focus-visible:border-accent"
-                />
-              </div>
-              {/* Shown whenever it can narrow results, or when the URL already applied a type. */}
-              {types.length > 1 || type !== null ? (
-                <fieldset>
-                  <legend className="text-sm font-medium">Type</legend>
-                  <div className="mt-1.5 flex flex-wrap gap-2">
-                    {[null, ...types].map((value) => (
-                      <label
-                        key={value ?? "all"}
-                        className="inline-flex h-10 cursor-pointer items-center rounded-full border border-line-strong bg-surface px-3.5 text-sm has-checked:border-accent has-checked:bg-accent-soft has-checked:font-semibold has-checked:text-accent-strong has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-accent"
-                      >
-                        <input
-                          type="radio"
-                          name="type"
-                          value={value ?? ""}
-                          checked={type === value}
-                          onChange={() => updateSearch({ q, type: value })}
-                          className="sr-only"
-                        />
-                        {value === null ? "All" : parameterLabel(value)}
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              ) : null}
-              <noscript>
-                <Button type="submit">Search</Button>
-              </noscript>
-            </form>
+        ) : null
+      }
+      stationList={
+        <section aria-labelledby={listId} className="@container min-w-0">
+          <h2 id={listId} tabIndex={-1} className="mb-3 text-lg font-semibold">
+            Stations
+          </h2>
+          {items.length > 0 ? (
+            <>
+              <form
+                role="search"
+                action="/"
+                method="get"
+                onSubmit={(event) => event.preventDefault()}
+                className="space-y-4 sm:flex sm:flex-wrap sm:items-end sm:gap-x-6 sm:gap-y-4 sm:space-y-0"
+              >
+                {Object.entries({
+                  ...explorerComparisonParams(state),
+                  ...explorerMapParams(mapRestore.context),
+                }).map(([name, value]) =>
+                  value === undefined ? null : (
+                    <input key={name} type="hidden" name={name} value={value} />
+                  ),
+                )}
+                <div className="w-full">
+                  <label htmlFor={searchId} className="block text-sm font-medium">
+                    Search
+                  </label>
+                  <input
+                    id={searchId}
+                    type="search"
+                    name="q"
+                    value={q}
+                    maxLength={MAX_QUERY_LENGTH}
+                    onChange={(event) => updateSearch({ q: event.target.value, type })}
+                    placeholder="Station, river or measurement type"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="mt-1.5 block h-11 w-full max-w-copy rounded-md border border-line-input bg-surface px-3 text-base placeholder:text-ink-muted focus-visible:border-accent"
+                  />
+                </div>
+                {/* Shown whenever it can narrow results, or when the URL already applied a type. */}
+                {types.length > 1 || type !== null ? (
+                  <fieldset>
+                    <legend className="text-sm font-medium">Type</legend>
+                    <div className="mt-1.5 flex flex-wrap gap-2">
+                      {[null, ...types].map((value) => (
+                        <label
+                          key={value ?? "all"}
+                          className="inline-flex h-10 cursor-pointer items-center rounded-full border border-line-strong bg-surface px-3.5 text-sm has-checked:border-accent has-checked:bg-accent-soft has-checked:font-semibold has-checked:text-accent-strong has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-accent"
+                        >
+                          <input
+                            type="radio"
+                            name="type"
+                            value={value ?? ""}
+                            checked={type === value}
+                            onChange={() => updateSearch({ q, type: value })}
+                            className="sr-only"
+                          />
+                          {value === null ? "All" : parameterLabel(value)}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                ) : null}
+                <noscript>
+                  <Button type="submit">Search</Button>
+                </noscript>
+              </form>
 
-            <p className="mt-4 text-sm text-ink-muted">{count}</p>
-            {/* Announced once typing pauses, not on every keystroke. */}
-            <p role="status" className="sr-only">
-              {announcement}
-            </p>
-          </>
-        ) : null}
-        <div className="mt-3">
-          {ids.length >= 2 ? (
-            <a href="#explorer-comparison" className="link mb-3 inline-block text-sm">
-              View comparison chart
-            </a>
+              <p className="mt-4 text-sm text-ink-muted">{count}</p>
+              {/* Announced once typing pauses, not on every keystroke. */}
+              <p role="status" className="sr-only">
+                {announcement}
+              </p>
+            </>
           ) : null}
-          {catalogueUnavailable ? (
-            <ErrorState title="Measurements are unavailable right now">
-              Please try again in a few minutes.
-            </ErrorState>
-          ) : items.length === 0 ? (
-            <EmptyState title="No measurements to show yet" />
-          ) : groups.length > 0 ? (
-            <MeasurementList groups={groups} comparisonAction={addToComparison} />
-          ) : (
-            <EmptyState
-              title="No matching measurements"
-              // A real link, so it also clears a script-free GET search.
-              action={
-                <Link
-                  href="/"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    updateSearch({ q: "", type: null });
-                  }}
-                  className="inline-flex min-h-10 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium transition-colors hover:bg-canvas"
-                >
-                  Clear search
-                </Link>
-              }
-            >
-              Try a station, river or measurement type.
-            </EmptyState>
-          )}
-        </div>
-      </section>
-    </div>
+          <div className="mt-3">
+            {catalogueUnavailable ? (
+              <ErrorState title="Measurements are unavailable right now">
+                Please try again in a few minutes.
+              </ErrorState>
+            ) : items.length === 0 ? (
+              <EmptyState title="No measurements to show yet" />
+            ) : groups.length > 0 ? (
+              <MeasurementList groups={groups} comparisonAction={addToComparison} />
+            ) : (
+              <EmptyState
+                title="No matching measurements"
+                // A real link, so it also clears a script-free GET search.
+                action={
+                  <Link
+                    href="/"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      updateSearch({ q: "", type: null });
+                    }}
+                    className="inline-flex min-h-10 items-center rounded-md border border-line-strong bg-surface px-3.5 text-sm font-medium transition-colors hover:bg-canvas"
+                  >
+                    Clear search
+                  </Link>
+                }
+              >
+                Try a station, river or measurement type.
+              </EmptyState>
+            )}
+          </div>
+        </section>
+      }
+    />
   );
 }

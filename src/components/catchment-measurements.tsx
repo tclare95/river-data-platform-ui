@@ -34,7 +34,7 @@ export function CatchmentMeasurements({
   const omitted = available?.omittedMeasurements ?? 0;
 
   return (
-    <section aria-labelledby={titleId} className="space-y-2 border-t border-line px-5 py-3 sm:px-6">
+    <section aria-labelledby={titleId} className="space-y-2 border-t border-line pt-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id={titleId} className="font-semibold">
           Catchment measurements

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createRdpClient, type RdpClient } from "@/lib/rdp/client";
 import { RdpError } from "@/lib/rdp/errors";
@@ -25,6 +25,9 @@ async function renderHome(searchParams: Record<string, string | string[]> = {}) 
       searchParams: Promise.resolve(searchParams),
     } as PageProps<"/">),
   );
+  const stations = screen.getByRole("button", { name: "Stations" });
+  expect(stations).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(stations);
   return screen.getByRole("region", { name: "Measurements" });
 }
 
