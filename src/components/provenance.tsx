@@ -11,8 +11,14 @@ export function FixtureNote({ className }: { className?: string }) {
 }
 
 /** Licence attribution for every provider whose data is on the page. */
-export function Attribution({ measurements }: { measurements: readonly PublicMeasurement[] }) {
+export function Attribution({
+  measurements,
+  className,
+}: {
+  measurements: readonly PublicMeasurement[];
+  className?: string;
+}) {
   const lines = [...new Set(measurements.map((measure) => measure.source.attribution))];
   if (lines.length === 0) return null;
-  return <p className="mt-8 text-xs text-ink-muted">{lines.join(" ")}</p>;
+  return <p className={cx("mt-8 text-xs text-ink-muted", className)}>{lines.join(" ")}</p>;
 }

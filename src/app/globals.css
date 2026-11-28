@@ -52,3 +52,84 @@
 @utility link {
   @apply text-accent underline decoration-1 underline-offset-4 hover:text-accent-strong;
 }
+
+/* Give the map the space left by the actual site header and wrapping toolbar. */
+@media (scripting: enabled) {
+  body:has(.explorer-workspace:not([data-map-unavailable])) {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) 0;
+    height: 100svh;
+    min-height: 24rem;
+  }
+
+  body:has(.explorer-workspace:not([data-map-unavailable])) > footer {
+    align-self: start;
+  }
+
+  main:has(> .explorer-page .explorer-workspace:not([data-map-unavailable])),
+  .explorer-page:has(.explorer-workspace:not([data-map-unavailable])) {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .explorer-page:has(.explorer-workspace:not([data-map-unavailable])) {
+    flex: 1;
+  }
+}
+
+.explorer-panel,
+.explorer-station-panel {
+  position: absolute;
+  inset-inline: 0.5rem;
+  bottom: 2rem;
+  z-index: 10;
+}
+
+.explorer-panel {
+  max-height: 48%;
+}
+
+.explorer-station-panel {
+  top: 52%;
+  align-content: end;
+}
+
+/* A short landscape screen has more room alongside the map than below it. */
+@media (min-width: 48rem), (orientation: landscape) and (min-width: 36rem) {
+  .explorer-panel,
+  .explorer-station-panel {
+    inset-inline: auto 3rem;
+    top: 0.5rem;
+    width: min(24rem, 42%);
+  }
+
+  .explorer-panel {
+    bottom: auto;
+    max-height: calc(100% - 3rem);
+  }
+
+  .explorer-station-panel {
+    align-content: start;
+  }
+}
+
+@media (scripting: none) {
+  .explorer-stations {
+    position: static;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    box-shadow: none;
+  }
+}
+
+/* Override Tailwind preflight's important hidden rule for the server-rendered list. */
+@layer base {
+  @media (scripting: none) {
+    .explorer-stations[hidden] {
+      display: block !important;
+    }
+  }
+}
