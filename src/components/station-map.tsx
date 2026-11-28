@@ -756,7 +756,21 @@ export function StationMap({
     () => [...visibleMappedStations, ...inventoryMarkers],
     [visibleMappedStations, inventoryMarkers],
   );
-  const rainfall = useRainfallMap(unavailable ? undefined : map, rainfallPeriod, rainfallGauges);
+  const selectedRainfallIds = useMemo(
+    () =>
+      inventorySelected
+        ? (inventorySelectionRain?.rainfallIds ?? [])
+        : (selected?.measurements
+            .filter(isRainfallTotal)
+            .map(({ measurementId }) => measurementId) ?? []),
+    [inventorySelected, inventorySelectionRain, selected],
+  );
+  const rainfall = useRainfallMap(
+    unavailable ? undefined : map,
+    rainfallPeriod,
+    rainfallGauges,
+    selectedRainfallIds,
+  );
   const inventoryRainfallLabel = useCallback(
     ({ rainfallIds }: { rainfallIds: readonly string[] }) =>
       rainfallMarkerLabel(rainfallIds, rainfall),
@@ -1106,13 +1120,7 @@ export function StationMap({
                   <RainfallMapDetails
                     period={rainfallPeriod}
                     view={rainfall}
-                    ids={
-                      inventorySelected
-                        ? (inventorySelectionRain?.rainfallIds ?? [])
-                        : (selected?.measurements
-                            .filter(isRainfallTotal)
-                            .map(({ measurementId }) => measurementId) ?? [])
-                    }
+                    ids={selectedRainfallIds}
                     emptyLabel={
                       inventorySelectionRain?.rainfallMarker.availability === "discoverable"
                         ? "No rainfall observations published by RDP"
@@ -1201,7 +1209,7 @@ export function StationMap({
               </label>
               {rainfallEnabled && rainfall.limited ? (
                 <p role="status">
-                  Showing up to four rainfall totals. Zoom in to see other gauges’ totals.
+                  Showing up to four rainfall totals. Select a gauge or zoom in to see more.
                 </p>
               ) : null}
               {!rainfallEnabled && stations.length > 0 ? (

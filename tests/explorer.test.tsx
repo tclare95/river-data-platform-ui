@@ -469,22 +469,30 @@ describe("measurement explorer", () => {
     expect(pending[0].params.getAll("id")).toEqual(["rain-a", "rain-b", "rain-c", "rain-d"]);
     expect(screen.getByText(/Showing up to four rainfall totals/)).toBeVisible();
 
-    fireEvent.change(period, { target: { value: "72h" } });
+    const map = within(screen.getByRole("region", { name: "River map" }));
+    fireEvent.click(map.getByRole("button", { name: /^rain-e ·/ }));
     expect(pending[0].signal?.aborted).toBe(true);
     await waitFor(() => expect(pending).toHaveLength(2));
-    expect(pending[1].params.get("period")).toBe("72h");
-    moveArea([-2.5, 52.5, -2, 53]);
-    expect(pending[1].signal?.aborted).toBe(true);
+    expect(pending[1].params.getAll("id")).toEqual(["rain-a", "rain-b", "rain-c", "rain-e"]);
+    await act(async () => pending[1].finish(rainfallResponse("rain-e", 3)));
+    expect(within(screen.getByRole("region", { name: "rain-e" })).getByText("3 mm")).toBeVisible();
+
+    openPanel("Layers");
+    fireEvent.change(period, { target: { value: "72h" } });
+    expect(map.queryByRole("button", { name: /rain-e.*3 mm/ })).not.toBeInTheDocument();
     await waitFor(() => expect(pending).toHaveLength(3));
-    expect(pending[2].params.getAll("id")).toEqual(["rain-f"]);
     expect(pending[2].params.get("period")).toBe("72h");
+    moveArea([-2.5, 52.5, -2, 53]);
+    expect(pending[2].signal?.aborted).toBe(true);
+    await waitFor(() => expect(pending).toHaveLength(4));
+    expect(pending[3].params.getAll("id")).toEqual(["rain-f"]);
+    expect(pending[3].params.get("period")).toBe("72h");
 
     await act(async () => {
-      pending[2].finish(rainfallResponse("rain-f", 1));
-      pending[1].finish(rainfallResponse("rain-a", 88));
+      pending[3].finish(rainfallResponse("rain-f", 1));
+      pending[2].finish(rainfallResponse("rain-e", 88));
       pending[0].finish(rainfallResponse("rain-a", 99));
     });
-    const map = within(screen.getByRole("region", { name: "River map" }));
     expect(map.getByRole("button", { name: /rain-f.*Partial 1 mm/ })).toBeVisible();
     expect(map.queryByRole("button", { name: /88 mm|99 mm/ })).not.toBeInTheDocument();
 

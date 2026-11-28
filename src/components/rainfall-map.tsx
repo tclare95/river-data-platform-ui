@@ -21,6 +21,7 @@ export function useRainfallMap(
   map: MapLibreMap | undefined,
   period: RainfallMapPeriod | "",
   gauges: readonly Gauge[],
+  selectedIds: readonly string[],
 ) {
   const [bounds, setBounds] = useState<readonly [number, number, number, number]>();
   const enabled = period !== "";
@@ -59,8 +60,10 @@ export function useRainfallMap(
         ),
       }))
       .sort((a, b) => a.distance - b.distance);
-    return [...new Set(visible.flatMap(({ rainfallIds }) => rainfallIds))];
-  }, [bounds, gauges, period]);
+    const visibleIds = new Set(visible.flatMap(({ rainfallIds }) => rainfallIds));
+    const selected = selectedIds.filter((id) => visibleIds.has(id));
+    return [...new Set([...selected, ...visibleIds])];
+  }, [bounds, gauges, period, selectedIds]);
 
   const idQuery = ids.slice(0, MAX_MAP_RAINFALL_MEASUREMENTS).sort().join(",");
   const query = useMemo(() => {
@@ -168,7 +171,7 @@ export function RainfallMapDetails({
                 ) : requested.includes(id) ? (
                   "Loading rainfall total…"
                 ) : limited ? (
-                  "Zoom in to load this rainfall total"
+                  "Rainfall total is outside the current request limit"
                 ) : (
                   "Rainfall total loads when the gauge is in view"
                 )}
